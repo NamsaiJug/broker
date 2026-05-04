@@ -746,6 +746,8 @@
     <div class="brand">
       <div class="brand-title" id="meta-title">Loading…</div>
       <div class="brand-updated" id="meta-date"></div>
+        <div id="meta-desc-th" style="font-size:12px;color:var(--text-secondary);margin-top:4px;line-height:1.5;"></div>
+        <div id="meta-desc-en" style="font-size:12px;color:var(--text-muted);margin-top:2px;line-height:1.5;"></div>
     </div>
 
 <!-- Edge Type Legend -->
@@ -1177,6 +1179,8 @@ async function loadAllData() {
   const meta = {
     title:   (metaLines[0] && metaLines[0][1]) ? metaLines[0][1].trim() : 'Network Visualization',
     updated: (metaLines[1] && metaLines[1][1]) ? metaLines[1][1].trim() : '',
+    desc_th: (metaLines[2] && metaLines[2][1]) ? metaLines[2][1].trim() : '',  // B3: Thai desc
+    desc_en: (metaLines[3] && metaLines[3][1]) ? metaLines[3][1].trim() : '',  // B4: English desc
   };
 
   /* ── Normalize nodes ────────────────────────────────────────
@@ -1740,12 +1744,12 @@ function reapplyEdgeColors() {
 
   /* Arrow markers — re-colour after EDGE_STYLES updated by fetchColorConfig */
   const markerColors = {
-    'arrow-black':       EDGE_STYLES['Non-shareholding/control relationship']?.stroke      || '#222243',
-    'arrow-red':         EDGE_STYLES['shareholding']?.stroke                               || '#3820ec',
-    'arrow-grey':        EDGE_STYLES['Past shareholding']?.stroke                          || '#8e9aff',
-    'arrow-black-muted': EDGE_STYLES['Non-shareholding/control relationship']?.strokeMuted || '#e8e8ee',
-    'arrow-red-muted':   EDGE_STYLES['shareholding']?.strokeMuted                         || '#e7ecff',
-    'arrow-grey-muted':  EDGE_STYLES['Past shareholding']?.strokeMuted                    || '#e7ecff',
+    'arrow-black':       (EDGE_STYLES['Non-shareholding/control relationship'] || EDGE_STYLE_DEFAULT).stroke,
+    'arrow-red':         (EDGE_STYLES['shareholding'] || EDGE_STYLE_DEFAULT).stroke,
+    'arrow-grey':        (EDGE_STYLES['Past shareholding'] || EDGE_STYLE_DEFAULT).stroke,
+    'arrow-black-muted': (EDGE_STYLES['Non-shareholding/control relationship'] || EDGE_STYLE_DEFAULT).strokeMuted,
+    'arrow-red-muted':   (EDGE_STYLES['shareholding'] || EDGE_STYLE_DEFAULT).strokeMuted,
+    'arrow-grey-muted':  (EDGE_STYLES['Past shareholding'] || EDGE_STYLE_DEFAULT).strokeMuted,
   };
   Object.entries(markerColors).forEach(([id, color]) => {
     const markerPath = document.querySelector(`#${id} path`);
@@ -2874,6 +2878,8 @@ function buildLocationLegend(nodes) {
 function applyMetadata(meta) {
   document.getElementById('meta-title').textContent = meta.title;
   document.getElementById('meta-date').textContent  = meta.updated ? `Updated: ${meta.updated}` : '';
+  if (meta.desc_th) document.getElementById('meta-desc-th').textContent = meta.desc_th;
+  if (meta.desc_en) document.getElementById('meta-desc-en').textContent = meta.desc_en;
   document.title = meta.title;
 }
 
