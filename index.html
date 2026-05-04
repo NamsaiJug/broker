@@ -1,0 +1,3781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Radial Network Visualization</title>
+
+  <!-- D3.js v7 from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+
+  <!-- Google Fonts: IBM Plex Sans Thai Looped — all weights, one place to change -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai+Looped:wght@300;400;500;600;700;800&display=swap"
+    rel="stylesheet"
+  />
+
+  <style>
+    /* ================================================================
+       CSS CUSTOM PROPERTIES
+       Change colors / sizes here — they cascade everywhere.
+    ================================================================ */
+    /* ── FONT: change this one variable to restyle all text ── */
+    :root {
+      --font: 'IBM Plex Sans Thai Looped', sans-serif;
+
+      /* ── Light mode — academic / forensic architecture ─────────── */
+      --bg:             #fcfcfb;   /* near-white */
+      --panel-bg:       #f4f2ee;   /* warm off-white */
+      --panel-border:   #d4d0c8;   /* warm grey */
+      --accent:         #1a1a1a;   /* near-black (replaces gold) */
+      --people:         #1a1a1a;   /* person node bg — fetched from sheet */
+      --accent2:        #ff2323;   /* forensic red */
+      --text-primary:   #111111;
+      --text-secondary: #444444;
+      --text-muted:     #888880;
+
+      /* Edge active colours */
+      --edge-solid:          #222243;  /* non-shareholding */
+      --edge-past:           #73738a;  /* past non-shareholding */
+      --edge-share:          #3820ec;  /* shareholding */
+      --edge-share-past:     #8e9aff;  /* past shareholding */
+      /* Edge muted colours (full opacity, desaturated) */
+      --edge-solid-muted:    #e8e8ee;
+      --edge-past-muted:     #e8e8ee;
+      --edge-share-muted:    #e7ecff;
+      --edge-share-past-muted:#e7ecff;
+
+      --left-w:         260px;
+      --right-w:        300px;
+      --radius-sm:      0px;
+      --radius-md:      0px;
+      --transition:     0.2s ease;
+    }
+
+    /* ================================================================
+       RESET / BASE
+    ================================================================ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text-primary);
+      font-family: var(--font);
+      font-size: 13px;
+      line-height: 1.6;
+      overflow: hidden;
+      height: 100vh;
+      display: flex;
+    }
+
+    /* ================================================================
+       LAYOUT SKELETON
+       [ LEFT PANEL ] [ SVG CANVAS ] [ RIGHT PANEL ]
+    ================================================================ */
+    #app {
+      width: 100%;
+      height: 100vh;
+      position: relative;
+    }
+
+    /* ── LEFT PANEL ─────────────────────────────────────────── */
+    #panel-left {
+      visibility: hidden;  /* hidden until sheet colours applied */
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      bottom: 20px;
+      width: var(--left-w);
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      display: flex;
+      flex-direction: column;
+      padding: 24px 18px;
+      gap: 24px;
+      overflow-y: auto;
+      z-index: 20;
+    }
+    .brand {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .brand-title {
+      font-family: var(--font);
+      font-weight: 800;
+      font-size: 15px;
+      color: var(--text-primary);
+      letter-spacing: 0.02em;
+      line-height: 1.3;
+    }
+
+    .brand-updated {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .section-label {
+      font-family: var(--font);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+
+    /* Legend blocks */
+    .legend-group { display: flex; flex-direction: column; gap: 6px; }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    /* Node type icons in legend */
+    .leg-node {
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .leg-node.person       { background: #1a1a1a; border: 2px solid #aaa; }
+    .leg-node.company      { background: #2c6fad; }
+    .leg-node.government   { background: #2a7a4e; }
+
+    /* Edge line samples in legend */
+    .leg-edge {
+      width: 28px; height: 2px;
+      flex-shrink: 0;
+      position: relative;
+    }
+    /* Relationship legend colours set dynamically via buildRelationshipLegend() */
+
+    /* Location color swatches */
+    .leg-swatch {
+      width: 12px; height: 12px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+
+    /* ── CENTER CANVAS ──────────────────────────────────────── */
+    #canvas {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    /* Search bar sits inside canvas, top-right */
+    #search-container {
+      position: relative;  /* anchor for dropdown positioning */
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      width: 100%;         /* fill the panel width */
+    }
+
+    #search-input {
+      background: #ffffff;
+      border: 1px solid var(--panel-border);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 13px;
+      padding: 8px 12px;
+      outline: none;
+      transition: border var(--transition);
+    }
+    #search-input:focus { border-color: #1a1a1a; }
+    #search-input::placeholder { color: var(--text-muted); }
+
+    #search-dropdown {
+      display: none;
+      background: #ffffff;
+      border: 1px solid var(--panel-border);
+      border-top: none;
+      border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+      max-height: 220px;
+      overflow-y: auto;
+      position: absolute;  /* float over content below */
+      top: 100%;           /* start right below the search-container */
+      width: 100%;
+      z-index: 30;
+      left: 0;
+    }
+    #search-dropdown.visible { display: block; }
+
+    .search-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--panel-border);
+    }
+    .search-tab {
+      flex: 1;
+      padding: 6px;
+      text-align: center;
+      font-size: 11px;
+      font-family: var(--font);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      cursor: pointer;
+      color: var(--text-muted);
+      transition: color var(--transition), background var(--transition);
+    }
+    .search-tab.active { color: var(--accent); background: rgba(232,201,122,0.06); }
+
+    .search-result {
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--text-secondary);
+      transition: background var(--transition);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .search-result:hover { background: rgba(0,0,0,0.04); color: var(--text-primary); }
+
+    .search-empty {
+      padding: 10px 12px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    /* SVG fills the canvas */
+    #graph-svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Tooltip for edge labels */
+    #edge-tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(13,15,20,0.92);
+      border: 1px solid var(--panel-border);
+      border-radius: var(--radius-sm);
+      padding: 6px 10px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      max-width: 200px;
+      display: none;
+      z-index: 30;
+    }
+
+    /* ── View toggle (Radial / Grid) ─────────────────────────── */
+    #view-toggle {
+      visibility: hidden;
+      position: absolute;
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      display: flex;
+      border: 1px solid var(--panel-border);
+      overflow: hidden;
+    }
+    .view-btn {
+      padding: 7px 20px;
+      font-family: var(--font);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      cursor: pointer;
+      border: none;
+      background: var(--bg);
+      transition: background 0.2s, color 0.2s;
+    }
+    .view-btn:last-child { border-right: none; }
+    .view-btn.active {
+      background: var(--accent);
+      color: var(--bg);
+    }
+    .view-btn:hover:not(.active) {
+      background: var(--accent);
+      color: var(--bg);
+    }
+
+    /* Grid edges are <path> elements, not <line> */
+    path.edge-path {
+      fill: none;
+      transition: stroke 0.2s ease;
+    }
+    path.edge-path:hover { opacity: 0.7 !important; }
+    path.edge-path.edge-focused { stroke-width: 2.5px; }
+    path.edge-path.edge-faded   { }
+
+
+    /* Loading / error overlay */
+    #overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #fcfcfb; /* fixed neutral — doesn't flash with wrong sheet colour */
+      z-index: 50;
+      gap: 12px;
+    }
+    .overlay-spinner {
+      width: 36px; height: 36px;
+      border: 3px solid var(--panel-border);
+      border-top-color: #ff2323;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .overlay-text { color: var(--text-secondary); font-size: 13px; }
+    .overlay-error { color: #ff2323; font-size: 13px; max-width: 360px; text-align: center; }
+
+    /* ── RIGHT PANEL ────────────────────────────────────────── */
+    #panel-right {
+      visibility: hidden;  /* hidden until sheet colours applied */
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      bottom: 20px;
+      width: var(--right-w);
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      display: flex;
+      flex-direction: column;
+      padding: 24px 18px;
+      gap: 0;
+      overflow-y: auto;
+      z-index: 20;
+    }
+    .right-placeholder {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: var(--text-muted);
+      text-align: center;
+      font-size: 12px;
+    }
+    .right-placeholder svg { opacity: 0.25; }
+
+    /* Node detail card */
+    #node-detail { display: none; flex-direction: column; gap: 18px; }
+    #node-detail.visible { display: flex; }
+
+    .node-avatar {
+      width: 60px; height: 60px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid var(--panel-border);
+    }
+
+    .node-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .node-header-text { display: flex; flex-direction: column; gap: 2px; }
+
+    .node-name-th {
+      font-family: var(--font);
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-primary);
+      line-height: 1.3;
+    }
+
+    .node-name-en {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .node-type-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 10px;
+      font-family: var(--font);
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .attrs { display: flex; flex-direction: column; gap: 8px; }
+
+    .attr-row {
+      display: flex;
+      gap: 6px;
+      font-size: 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      padding-bottom: 6px;
+    }
+    .attr-label {
+      color: var(--text-muted);
+      min-width: 80px;
+      flex-shrink: 0;
+    }
+    .attr-value { color: var(--text-secondary); word-break: break-word; }
+
+    .note-box {
+      background: rgba(0,0,0,0.03);
+      border-left: 3px solid #1a1a1a;
+      padding: 8px 10px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      border-radius: 0 4px 4px 0;
+      line-height: 1.55;
+    }
+
+    /* Connections list */
+    .conn-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .conn-item {
+      background: rgba(255,255,255,0.025);
+      border: 1px solid var(--panel-border);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+      cursor: pointer;
+      transition: background var(--transition);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .conn-item:hover { background: var(--bg); cursor: pointer; }
+
+    .conn-item-name { font-size: 14px; color: var(--text-primary); font-weight: 500; }
+    .conn-item-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+    .conn-item-text-group { display: flex; flex-direction: column; gap: 0; flex: 1; min-width: 0; }
+    .conn-type-group .conn-item + .conn-item { margin-top: 5px; }
+    .conn-item-avatar {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+      background: var(--panel-border);
+      border: 1px solid var(--panel-border);
+      align-self: flex-start;
+    }
+    .conn-item-avatar-placeholder {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: var(--panel-border);
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; color: var(--text-muted);
+      align-self: flex-start;
+    }
+    .conn-type-group { margin-bottom: 12px; }
+    .conn-type-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      padding-bottom: 4px;
+    }
+    .conn-type-pill {
+      display: inline-block;
+      font-size: 9px;
+      font-weight: 700;
+      padding: 1px 7px;
+      border-radius: 1000px;
+      white-space: nowrap;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .conn-type-count {
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+    .conn-item-type {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 1000px;
+      color: var(--bg);
+      margin-bottom: 4px;
+      white-space: nowrap;
+    }
+    .conn-item-amount { font-size: 12px; color: var(--edge-share); }
+    .conn-item-detail { font-size: 12px; font-weight: 400; color: var(--text-secondary); }
+
+    /* ── SVG element styles (applied via D3) ────────────────── */
+    .node-circle { cursor: pointer; transition: opacity 0.2s; }
+    .node-label  { font-family: var(--font); pointer-events: none; }
+    /* When a node group is hovered, turn its label white.
+       Labels are in g#g-node-labels, so we use a JS class on the <text>
+       element directly (see mouseenter/mouseleave on node-g).            */
+    text.node-label.label-hovered { fill: var(--text-primary) !important; }
+    .edge-path   { fill: none; }
+    .edge-bg     { fill: none; } /* wide semi-transparent background for shareholding */
+
+    /* Fade class applied to non-selected elements */
+    .faded { opacity: 0.08 !important; }
+    .highlighted { opacity: 1 !important; }
+
+    /* Edge default opacity */
+    line.edge-path { transition: stroke 0.2s ease; }
+
+    /* :hover always wins — highest specificity, beats all state classes */
+    line.edge-path:hover { opacity: 0.7 !important; }
+
+    /* State classes */
+    line.edge-path.edge-focused { stroke-width: 2.5px; }
+    line.edge-path.edge-faded   { }
+    /* Highlight filter — universal selector works for both <line> and <path> */
+    .hl-dim  { opacity: 0.02 !important; }
+    .hl-show { opacity: 0.15 !important; }
+
+    /* Connected nodes: no special stroke */
+    .node-g.node-connected > circle.node-circle {
+      stroke: none !important;
+    }
+    /* Selected node: accent stroke */
+    .node-g.node-selected > circle.node-circle {
+      stroke: var(--accent) !important;
+      stroke-width: 2px !important;
+    }
+
+    /* ── Highlight filter pills ──────────────────────────────────── */
+    .highlight-group { display: flex; flex-direction: column; gap: 6px; }
+
+    .highlight-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--panel-border);
+      cursor: pointer;
+      font-size: 11px;
+      color: var(--text-secondary);
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      line-height: 1.4;
+      background: transparent;
+      font-family: var(--font);
+      text-align: left;
+    }
+    .highlight-pill:hover {
+      background: var(--bg);
+    }
+    .highlight-pill.active {
+      background: var(--bg);
+      border-color: var(--accent);
+    }
+    /* ── Custom scrollbars ───────────────────────────────────────── */
+    /* Hide native scrollbars on all browsers */
+    #panel-left, #panel-right {
+      overflow-y: auto;
+      scrollbar-width: none;        /* Firefox */
+      -ms-overflow-style: none;     /* IE/Edge */
+    }
+    #panel-left::-webkit-scrollbar,
+    #panel-right::-webkit-scrollbar { display: none; }  /* Chrome/Safari/Opera */
+
+    /* Custom scrollbar track + thumb — JS-driven, works everywhere */
+    .custom-scrollbar {
+      position: absolute;
+      right: 2px;
+      top: 0;
+      width: 3px;
+      height: 100%;
+      pointer-events: all;  /* enable click-on-track */
+      z-index: 100;
+      cursor: pointer;
+    }
+    .custom-scrollbar-thumb {
+      position: absolute;
+      width: 3px;
+      border-radius: 2px;
+      background: var(--text-muted);
+      opacity: 0;
+      transition: opacity 0.3s;
+      right: 0;
+    }
+    .panel-scrolling .custom-scrollbar-thumb,
+    #panel-left:hover .custom-scrollbar-thumb,
+    #panel-right:hover .custom-scrollbar-thumb { opacity: 1; }
+    /* ── Zoom controls ─────────────────────────────── */
+    #zoom-controls {
+      visibility: hidden;
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      gap: 0;
+      border: 1px solid var(--panel-border);
+      background: var(--panel-bg);
+      overflow: hidden;
+    }
+    .zoom-btn {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 18px;
+      color: var(--text-secondary);
+      font-family: var(--font);
+      transition: background 0.15s, color 0.15s;
+      line-height: 1;
+    }
+    .zoom-btn:hover {
+      background: var(--accent);
+      color: var(--bg);
+    }
+    .zoom-divider {
+      width: 1px;
+      height: 20px;
+      background: var(--panel-border);
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       RESPONSIVE — portrait / mobile layout
+       Breakpoint: max-width 768px (portrait tablet / phone)
+    ══════════════════════════════════════════════════════════════ */
+    @media (max-width: 768px) {
+
+      /* ── Left panel: top bar, collapsible ── */
+      #panel-left {
+        top: 15px;
+        left: 15px;
+        right: 15px;
+        bottom: auto;
+        width: auto !important;    /* override desktop --left-w */
+        min-width: 0 !important;
+        max-height: auto;
+        /* Collapsed: only show brand (title + date) */
+        height: auto;
+        overflow: hidden;
+        transition: height 0.3s ease, max-height 0.3s ease;
+        z-index: 30;
+      }
+
+      /* Collapsed: clip content below the brand row */
+      #panel-left.collapsed {
+        overflow: hidden;
+      }
+
+      /* Expanded: 30vh height */
+      #panel-left.expanded {
+        height: 30vh;
+        max-height: 30vh;
+        overflow-y: auto;
+      }
+
+      /* Toggle button — top-right of panel */
+      #panel-toggle {
+        display: flex !important;
+        position: absolute;
+        top: 12px;
+        right: 14px;
+        width: 28px;
+        height: 28px;
+        align-items: center;
+        justify-content: center;
+        background: none;
+        border: 1px solid var(--panel-border);
+        color: var(--text-secondary);
+        font-size: 16px;
+        cursor: pointer;
+        font-family: var(--font);
+        line-height: 1;
+        z-index: 5;
+      }
+
+      /* Hide everything below .brand when collapsed */
+      #panel-left.collapsed > *:not(.brand):not(#panel-toggle) {
+        display: none !important;
+      }
+
+      /* ── Right panel: bottom bar ── */
+      #panel-right {
+        top: auto;
+        left: 15px;
+        right: 15px;
+        bottom: 15px;
+        width: auto !important;
+        min-width: 0 !important;
+        height: 30vh;
+        max-height: 30vh;
+        overflow-y: auto;
+        z-index: 30;
+      }
+
+      /* ── View toggle + zoom: adjust position ── */
+      #view-toggle {
+        top: auto;
+        bottom: calc(30vh + 30px);
+        left: 15px;
+        transform: none;  /* remove desktop centring */
+      }
+
+      #zoom-controls {
+        bottom: calc(30vh + 30px);
+        left: auto;
+        right: 15px;
+        transform: none;
+      }
+    }
+  </style>
+</head>
+
+<body>
+<div id="app">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       LEFT PANEL — title, legend
+  ════════════════════════════════════════════════════════════ -->
+  <aside id="panel-left" class="collapsed">
+    <button id="panel-toggle" style="display:none" title="Expand panel">+</button>
+
+    <div class="brand">
+      <div class="brand-title" id="meta-title">Loading…</div>
+      <div class="brand-updated" id="meta-date"></div>
+    </div>
+
+<!-- Edge Type Legend -->
+    <div>
+      <div class="section-label">Relationship Types</div>
+      <div class="legend-group" id="relationship-legend"></div>
+    </div>
+
+    <!-- Location color legend — populated dynamically -->
+    <div>
+      <div class="section-label">Register Location</div>
+      <div class="legend-group" id="location-legend"></div>
+    </div>
+
+    <!-- Highlight filter section -->
+    <div>
+      <div class="section-label">Highlight</div>
+      <div class="highlight-group" id="highlight-group">
+        <button class="highlight-pill" data-filter="mauerberger_linked">
+          Listed Thai company with ≥10% shares controlled by companies linked to Mauerberger
+        </button>
+        <button class="highlight-pill" data-filter="cai_linked">
+          Company in which George Tan (CAI) is authorized director
+        </button>
+        <button class="highlight-pill" data-filter="amlo_frozen">
+          Holdings frozen by AMLO
+        </button>
+        <button class="highlight-pill" data-filter="sec_suspended_jan">
+          Temporary suspended by SEC on 3 Jan 2026
+        </button>
+        <button class="highlight-pill" data-filter="nacc_investigation">
+          Under investigation by NACC (as of Feb 2026)
+        </button>
+        <button class="highlight-pill" data-filter="erx_group">
+          ERX Group (now KuCoin Thailand)
+        </button>
+        <button class="highlight-pill" data-filter="tidc_group">
+          TIDC Group (Thailand partner of WorldCoin)
+        </button>
+      </div>
+    </div>
+
+    <!-- Misc hints -->
+    <div style="margin-top:auto; color:var(--text-muted); font-size:11px; line-height:1.7;">
+      Click a node to explore connections.<br>
+      Scroll / pinch to zoom.
+    </div>
+  </aside>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       CENTER — SVG graph + search bar
+  ════════════════════════════════════════════════════════════ -->
+  <main id="canvas">
+
+    <!-- Loading / error overlay -->
+    <div id="overlay">
+      <div class="overlay-spinner"></div>
+      <div class="overlay-text">Loading data…</div>
+    </div>
+
+    <!-- View toggle: Radial ↔ Grid -->
+    <div id="view-toggle">
+      <button class="view-btn active" data-view="grid">▦ Grid</button>
+      <button class="view-btn"        data-view="radial">⬤ Radial</button>
+    </div>
+
+    <!-- Zoom controls -->
+    <div id="zoom-controls">
+      <button class="zoom-btn" id="zoom-in"  title="Zoom in">+</button>
+      <div class="zoom-divider"></div>
+      <button class="zoom-btn" id="zoom-out" title="Zoom out">−</button>
+    </div>
+
+    <!-- The SVG is injected by D3 -->
+    <svg id="graph-svg"></svg>
+
+    <!-- Debug panel: open the file with ?debug=1 in URL to activate -->
+    <div id="debug-panel" style="display:none; position:absolute; bottom:12px; left:12px;
+         background:rgba(0,0,0,0.85); border:1px solid #333; border-radius:6px;
+         padding:10px 14px; font-size:11px; color:#888880; max-width:340px;
+         max-height:200px; overflow-y:auto; z-index:50; font-family:monospace;">
+      <div style="color:#ff2323; margin-bottom:6px;">Image Debug Log</div>
+      <div id="debug-log"></div>
+    </div>
+
+    <!-- Floating edge label tooltip -->
+    <div id="edge-tooltip"></div>
+
+  </main>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       RIGHT PANEL — node detail + connections
+  ════════════════════════════════════════════════════════════ -->
+  <aside id="panel-right">
+
+    <!-- Search bar at the top of right panel -->
+    <div id="search-container" style="margin-bottom:12px">
+      <div style="position:relative; display:flex; align-items:center;">
+        <input id="search-input" type="text" placeholder="Search people/company name" autocomplete="off" style="padding-right:28px; width:100%; box-sizing:border-box;" />
+        <button id="search-clear" title="Clear search"
+          style="position:absolute; right:6px; background:none; border:none; cursor:pointer;
+                 color:var(--text-muted); font-size:14px; line-height:1; padding:2px 4px;
+                 display:none; font-family:var(--font);">✕</button>
+      </div>
+      <div id="search-dropdown">
+        <div class="search-tabs">
+          <div class="search-tab active" data-tab="people">People</div>
+          <div class="search-tab" data-tab="companies">Companies</div>
+        </div>
+        <div id="search-results"></div>
+      </div>
+    </div>
+
+    <!-- Placeholder when nothing selected -->
+    <div class="right-placeholder" id="right-placeholder">
+      <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+        <circle cx="20" cy="20" r="18" stroke="#888880" stroke-width="1.5" stroke-dasharray="4 3"/>
+        <circle cx="20" cy="20" r="4" fill="#888880"/>
+        <line x1="10" y1="20" x2="5"  y2="20" stroke="#888880" stroke-width="1.5"/>
+        <line x1="30" y1="20" x2="35" y2="20" stroke="#888880" stroke-width="1.5"/>
+        <line x1="20" y1="10" x2="20" y2="5"  stroke="#888880" stroke-width="1.5"/>
+        <line x1="20" y1="30" x2="20" y2="35" stroke="#888880" stroke-width="1.5"/>
+      </svg>
+      Select a node to view details
+    </div>
+
+    <!-- Node detail (hidden until selection) -->
+    <div id="node-detail">
+
+      <div class="node-header">
+        <img class="node-avatar" id="nd-avatar" src="" alt="" style="display:none" />
+        <div class="node-header-text">
+          <div class="node-name-th" id="nd-name-th"></div>
+          <div class="node-name-en" id="nd-name-en"></div>
+        </div>
+      </div>
+
+      <div class="attrs" id="nd-attrs"></div>
+
+      <div id="nd-note-wrap" style="display:none">
+        <div class="section-label">Note</div>
+        <div class="note-box" id="nd-note"></div>
+      </div>
+
+      <div>
+        <div class="section-label"><span id="nd-conn-count">0</span> Relationships</div>
+        <div class="conn-list" id="nd-conn-list"></div>
+      </div>
+
+    </div>
+  </aside>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     JAVASCRIPT — all logic below
+════════════════════════════════════════════════════════════════ -->
+<script>
+'use strict';
+
+/* ══════════════════════════════════════════════════════════════
+   1. CONFIGURATION
+   Edit these constants to reconfigure without touching logic.
+══════════════════════════════════════════════════════════════ */
+
+const CONFIG = {
+  /* Google Sheets export URLs — update SHEET_ID if the spreadsheet changes */
+  SHEET_ID:    '1Rx2FVV0R5IV3FnVI9lBX9i2dLXqB2egQCxs0qKGLHvQ',
+  GID_NODES:   '902562',
+  GID_EDGES:   '193594057',
+  GID_META:    '165267464',
+
+  /* Radial layout */
+  RADIAL_PADDING_DEG: 10,    // degrees of blank space at the top of the circle
+  NODE_RADIUS_BASE:   10,    // fallback radius (not used directly — see NODE_RADIUS_BY_TYPE)
+  NODE_RADIUS_SCALE:  0,     // kept for compatibility
+  /* Type-based radii — half of the desired px size (radius = size/2) */
+  NODE_RADIUS_BY_TYPE: {
+    'person':            17.5,  // 35px diameter
+    'government agency': 17.5,  // 35px diameter
+    'company':           10,    // 20px diameter
+  },
+
+  /* Visual */
+  LABEL_OFFSET:       6,     // px gap between node edge and label (added to radius)
+  EDGE_OPACITY:       0.15,  // default opacity; edges become 1.0 on hover
+  FADE_OPACITY:       0.08,
+
+  /* Grid layout */
+  GRID_SPACING:       90,   // px between grid cell centres
+  /* Grid uses same type-based radii as radial (see NODE_RADIUS_BY_TYPE) */
+
+  /* Paths — relative to the HTML file, no leading slash */
+  IMAGE_PATH:         'images/',
+};
+
+/* ── Register-location → fill color mapping ─────────────────────
+   Add / edit entries as new locations appear in the data.       */
+const LOCATION_COLORS = {
+  'Thailand':               '#2c6fad',  // mid blue
+  'Hong Kong':              '#b36b00',  // amber
+  'Singapore':              '#2a7a4e',  // forest green
+  'United Kingdom':         '#6b3fa0',  // purple
+  'United States':          '#ff2323',  // forensic red
+  'Cayman Islands':         '#178080',  // teal
+  'British Virgin Islands': '#a05820',  // burnt orange
+  'Mauritius':              '#4a7a20',  // olive
+  'Panama':                 '#8b2060',  // magenta
+  'Unknown':                '#888880',  // muted
+  'default':                '#888880',
+};
+
+/* ── Edge type → visual style mapping ──────────────────────────
+   stroke: main line color
+   dash:   strokeDasharray (empty string = solid)
+   bg:     background line color (only for shareholding types)  */
+const EDGE_STYLES = {
+  'Non-shareholding/control relationship': {
+    stroke: '#222243', dash: '', bg: null,
+    strokeMuted: '#e8e8ee',
+  },
+  'Past relationship': {
+    stroke: '#73738a', dash: '6,4', bg: null,
+    strokeMuted: '#e8e8ee',
+  },
+  'shareholding': {
+    stroke: '#3820ec', dash: '', bg: '#3820ec',
+    strokeMuted: '#e7ecff',
+  },
+  'Past shareholding': {
+    stroke: '#8e9aff', dash: '6,4', bg: '#8e9aff',
+    strokeMuted: '#e7ecff',
+  },
+};
+const EDGE_STYLE_DEFAULT = { stroke: '#222243', dash: '', bg: null, strokeMuted: '#e8e8ee' };
+
+/* ── Node type → badge colors ────────────────────────────────── */
+const TYPE_BADGE = {
+  'person':            { bg: 'rgba(0,0,0,0.07)', color: '#1a1a1a'    },
+  'company':           { bg: 'rgba(44,111,173,0.12)', color: '#2c6fad' },
+  'government agency': { bg: 'rgba(42,122,78,0.12)', color: '#2a7a4e'  },
+};
+
+
+/* ══════════════════════════════════════════════════════════════
+   2. UTILITY HELPERS
+══════════════════════════════════════════════════════════════ */
+
+/** Build a Google Sheets CSV export URL from SHEET_ID + GID */
+function sheetURL(gid) {
+  return `https://docs.google.com/spreadsheets/d/${CONFIG.SHEET_ID}/export?format=csv&gid=${gid}`;
+}
+
+/** Fetch a CSV URL and parse it with D3 */
+async function fetchCSV(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status} fetching ${url}`);
+  const text = await response.text();
+  return d3.csvParse(text);
+}
+
+/** Fetch the raw text of the metadata sheet (not parsed as CSV table) */
+async function fetchMetaRaw(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status} fetching ${url}`);
+  return response.text();
+}
+
+/** Return node fill color based on register_location */
+function locationColor(location) {
+  if (!location) return LOCATION_COLORS['default'];
+  // Try exact match first, then partial match
+  if (LOCATION_COLORS[location]) return LOCATION_COLORS[location];
+  const key = Object.keys(LOCATION_COLORS).find(k => location.includes(k));
+  return key ? LOCATION_COLORS[key] : LOCATION_COLORS['default'];
+}
+
+/** Clamp a value between min and max */
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+/** Convert polar to Cartesian coordinates */
+function polarToXY(angleDeg, radius) {
+  const rad = (angleDeg - 90) * (Math.PI / 180); // -90 so 0° is top
+  return { x: radius * Math.cos(rad), y: radius * Math.sin(rad) };
+}
+
+/** Show / hide the loading overlay */
+function setOverlay(visible, msg, isError = false) {
+  const el = document.getElementById('overlay');
+  el.style.display = visible ? 'flex' : 'none';
+  if (visible) {
+    el.innerHTML = isError
+      ? `<div class="overlay-error">⚠ ${msg}</div>`
+      : `<div class="overlay-spinner"></div><div class="overlay-text">${msg}</div>`;
+  }
+}
+
+
+
+/* ══════════════════════════════════════════════════════════════
+   COLOR CONFIG — fetched from Google Sheet
+   Sheet columns: variable_name | default | focused
+   Automatically updates LOCATION_COLORS and EDGE_STYLES when
+   the spreadsheet values change.
+══════════════════════════════════════════════════════════════ */
+
+/* Edge type → variable_name mapping (matches sheet values) */
+const EDGE_TYPE_TO_VAR = {
+  'shareholding':                          'Shareholding',
+  'Past shareholding':                     'Past shareholding',
+  'Non-shareholding/control relationship': 'Non-shareholding',
+  'Past relationship':                     'Past non-shareholding',
+};
+
+async function fetchColorConfig() {
+  const url = `https://docs.google.com/spreadsheets/d/1Rx2FVV0R5IV3FnVI9lBX9i2dLXqB2egQCxs0qKGLHvQ/export?format=csv&gid=964234344`;
+  try {
+    const res  = await fetch(url);
+    const text = await res.text();
+    const rows = text.trim().split('\n').slice(1); // skip header
+
+    const colorMap = {};
+    rows.forEach(row => {
+      /* CSV parse: handle quoted fields */
+      const cols = row.match(/(".*?"|[^,]+)(?=,|$)/g) || row.split(',');
+      const name    = (cols[0] || '').replace(/"/g, '').trim();
+      const def     = (cols[1] || '').replace(/"/g, '').trim();
+      const focused = (cols[2] || '').replace(/"/g, '').trim();
+      if (name) colorMap[name] = { default: def, focused: focused || def };
+    });
+
+    /* ── Apply UI theme colours → CSS custom properties ─────────
+       Sheet variable_name values for UI colours:
+       Background, Panel, Border, Primary text, Secondary text,
+       Muted text, Accent                                        */
+    const uiColorMap = {
+      'Background':    '--bg',
+      'Panel':         '--panel-bg',
+      'Border':        '--panel-border',
+      'Primary text':  '--text-primary',
+      'Secondary text':'--text-secondary',
+      'Muted text':    '--text-muted',
+      'Accent':        '--accent',
+      'people':        '--people',
+    };
+    Object.entries(uiColorMap).forEach(([varName, cssVar]) => {
+      if (colorMap[varName]) {
+        document.documentElement.style.setProperty(cssVar, colorMap[varName].default);
+      }
+    });
+
+    /* ── Apply location colours ───────────────────────────── */
+    const locationKeys = [
+      'Thailand', 'Singapore', 'Cambodia / Citizen of Cambodia',
+      'Luxembourg', 'Hong Kong', 'Turks & Caicos', 'Seychelles',
+      'China', 'Cayman Islands', 'British Virgin Islands', 'No information',
+    ];
+    locationKeys.forEach(key => {
+      if (colorMap[key]) LOCATION_COLORS[key] = colorMap[key].default;
+    });
+    /* Also set fallback keys */
+    if (colorMap['No information']) {
+      LOCATION_COLORS['No information'] = colorMap['No information'].default;
+      LOCATION_COLORS['no information'] = colorMap['No information'].default; // backward compat
+      LOCATION_COLORS['Unknown']  = colorMap['No information'].default;
+      LOCATION_COLORS['default']  = colorMap['No information'].default;
+    }
+
+    /* ── Apply edge colours ───────────────────────────────── */
+    Object.entries(EDGE_TYPE_TO_VAR).forEach(([edgeType, varName]) => {
+      if (!colorMap[varName]) return;
+      const style = EDGE_STYLES[edgeType];
+      if (!style) return;
+      style.strokeMuted = colorMap[varName].default;
+      style.stroke      = colorMap[varName].focused;
+      if (style.bg) {
+        style.bg = colorMap[varName].focused;
+      }
+    });
+    /* Update default fallback */
+    if (colorMap['Non-shareholding']) {
+      EDGE_STYLE_DEFAULT.strokeMuted = colorMap['Non-shareholding'].default;
+      EDGE_STYLE_DEFAULT.stroke      = colorMap['Non-shareholding'].focused;
+    }
+
+    /* ── Update SVG arrow marker colours ─────────────────────
+       Re-colour the <path> inside each marker in the live SVG. */
+    const markerColors = {
+      'arrow-black':       EDGE_STYLES['Non-shareholding/control relationship']?.stroke       || '#222243',
+      'arrow-red':         EDGE_STYLES['shareholding']?.stroke                                || '#3820ec',
+      'arrow-grey':        EDGE_STYLES['Past shareholding']?.stroke                           || '#8e9aff',
+      'arrow-black-muted': EDGE_STYLES['Non-shareholding/control relationship']?.strokeMuted  || '#e8e8ee',
+      'arrow-red-muted':   EDGE_STYLES['shareholding']?.strokeMuted                          || '#e7ecff',
+      'arrow-grey-muted':  EDGE_STYLES['Past shareholding']?.strokeMuted                     || '#e7ecff',
+    };
+    Object.entries(markerColors).forEach(([id, color]) => {
+      const markerPath = document.querySelector(`#${id} path`);
+      if (markerPath) markerPath.setAttribute('fill', color);
+    });
+
+    console.log('[colorConfig] loaded', Object.keys(colorMap).length, 'colours from sheet');
+    return colorMap;
+  } catch (err) {
+    console.warn('[colorConfig] failed to load colours:', err);
+    return {};
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   3. DATA LOADING & PREPROCESSING
+══════════════════════════════════════════════════════════════ */
+
+/**
+ * loadAllData()
+ * Fetch nodes, edges, and metadata concurrently.
+ * Returns { nodes, edges, meta }
+ */
+async function loadAllData() {
+  const [nodesRaw, edgesRaw, metaText] = await Promise.all([
+    fetchCSV(sheetURL(CONFIG.GID_NODES)),
+    fetchCSV(sheetURL(CONFIG.GID_EDGES)),
+    fetchMetaRaw(sheetURL(CONFIG.GID_META)),
+  ]);
+
+  /* ── Parse metadata (B1 = title, B2 = date) ─────────────────
+     The CSV has rows like: "Title","My Title"
+     d3.csvParse maps column headers from row 0;
+     we want the raw second column of rows 0 and 1.          */
+  const metaLines = metaText.split('\n').map(l => d3.csvParseRows(l)[0] || []);
+  const meta = {
+    title:   (metaLines[0] && metaLines[0][1]) ? metaLines[0][1].trim() : 'Network Visualization',
+    updated: (metaLines[1] && metaLines[1][1]) ? metaLines[1][1].trim() : '',
+  };
+
+  /* ── Normalize nodes ────────────────────────────────────────
+     Coerce numeric fields, normalize type strings to lowercase. */
+  const nodes = nodesRaw.map(d => ({
+    id:                   d.name?.trim()               || '',
+    name_th:              d.name_th?.trim()             || d.name?.trim() || '',
+    type:                 (d.type?.trim() || 'company').toLowerCase(),
+    register_location:    d.register_location?.trim()   || '',
+    date_of_incorporation:d.date_of_incorporation?.trim()|| '',
+    status:               d.status?.trim()              || '',
+    group:                d.group?.trim()               || '',
+    mauerberger_linked:   d.mauerberger_linked?.trim()  || '',
+    cai_linked:           d.cai_linked?.trim()          || '',
+    note:                 d.note?.trim()                || '',
+    num_connection:       +d.num_connection             || 0,
+    image_name:           d.image_name?.trim()          || '',
+    // These will be set during layout:
+    x: 0, y: 0, angle: 0,
+    /* radius set by type in computeRadialLayout */
+    radius: CONFIG.NODE_RADIUS_BY_TYPE[(d.type?.trim() || 'company').toLowerCase()] || CONFIG.NODE_RADIUS_BASE,
+  })).filter(d => d.id); // drop empty rows
+
+  /* ── Normalize edges ────────────────────────────────────────
+     Trim whitespace, coerce amount to number.                 */
+  const nodeIds = new Set(nodes.map(d => d.id));
+  const edges = edgesRaw.map(d => ({
+    source: d.from?.trim() || '',
+    target: d.to?.trim()   || '',
+    type:   d.type?.trim()  || '',
+    amount: +d.amount       || 0,
+    detail: d.detail?.trim()|| '',
+  }))
+  /* Only keep edges where both endpoints exist in the node list */
+  .filter(d => d.source && d.target && nodeIds.has(d.source) && nodeIds.has(d.target));
+
+  return { nodes, edges, meta };
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   4. RADIAL LAYOUT
+   Arranges nodes evenly around a circle.
+   Sort order: primary = type, secondary = num_connection (desc)
+══════════════════════════════════════════════════════════════ */
+
+/**
+ * computeRadialLayout(nodes, svgWidth, svgHeight)
+ * Mutates each node, adding { x, y, angle, radius }.
+ * Returns the orbit radius used.
+ */
+function computeRadialLayout(nodes, svgWidth, svgHeight) {
+  /* The orbit radius = half of the smaller canvas dimension, with padding */
+  const orbitRadius = Math.min(svgWidth, svgHeight) * 0.38;
+
+  /* Sort nodes: type priority then num_connection descending */
+  const TYPE_ORDER = { 'person': 0, 'company': 1, 'government agency': 2 };
+  nodes.sort((a, b) => {
+    const tA = TYPE_ORDER[a.type] ?? 9;
+    const tB = TYPE_ORDER[b.type] ?? 9;
+    if (tA !== tB) return tA - tB;
+    /* Alphabetical as secondary sort */
+    const nameA = (a.name_th || a.id || "").toLowerCase();
+    const nameB = (b.name_th || b.id || "").toLowerCase();
+    return nameA.localeCompare(nameB, undefined, { sensitivity: "base" });
+  });
+
+  const n = nodes.length;
+  /* Spread nodes over 360° minus padding */
+  const usableDeg  = 360 - CONFIG.RADIAL_PADDING_DEG;
+  const stepDeg    = usableDeg / Math.max(n - 1, 1);
+  const startAngle = CONFIG.RADIAL_PADDING_DEG / 2;
+
+  nodes.forEach((node, i) => {
+    const angleDeg = startAngle + i * stepDeg;
+    const pos = polarToXY(angleDeg, orbitRadius);
+    node.angle  = angleDeg;
+    node.x      = pos.x;
+    node.y      = pos.y;
+    /* Radius by node type: person/government=17.5px (35px dia), company=10px (20px dia) */
+    node.radius = CONFIG.NODE_RADIUS_BY_TYPE[node.type] ||
+                  CONFIG.NODE_RADIUS_BY_TYPE['company'];
+
+  });
+
+  return orbitRadius;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   4b. GRID LAYOUT  (circuit-diagram style)
+   ─────────────────────────────────────────────────────────────
+   WHY force-directed first?
+   Raw alphabetical / type ordering puts unrelated nodes next to
+   each other. A force simulation lets the network's own topology
+   pull connected nodes together naturally before we snap to grid.
+
+   WHY RasterFairy?
+   After the force sim we have a point cloud with good clustering
+   but fractional, overlapping positions. RasterFairy maps that
+   cloud onto an integer grid while preserving relative distances
+   — so cluster mates end up in adjacent cells, not scattered.
+
+   TRADEOFFS:
+   • Grid edges must jog around cells — orthogonal routing is a
+     simplification (no true obstacle avoidance).
+   • RasterFairy's TSP-based assignment is deterministic but not
+     globally optimal; clusters are approximate.
+══════════════════════════════════════════════════════════════ */
+
+/**
+ * computeClusteredGridLayout(nodes, edges, svgWidth, svgHeight)
+ *
+ * Pipeline:
+ *   1. D3 force simulation  → positions cluster by connectivity
+ *   2. Normalize positions  → fit into [0,1] range
+ *   3. RasterFairy          → snap to integer grid, preserve clusters
+ *   4. Scale to canvas      → apply CONFIG.GRID_SPACING
+ *
+ * Mutates each node's .gx and .gy (grid cell) and .x, .y (pixel).
+ * Returns a Promise (force sim runs async ticks via d3.timer).
+ */
+function computeClusteredGridLayout(nodes, edges, svgWidth, svgHeight) {
+  return new Promise(resolve => {
+    try {
+      const n = nodes.length;
+      if (n === 0) { resolve({}); return; }
+
+      /* ── Step 1: Force simulation ─────────────────────────────────
+         Pull connected nodes together so the grid reflects topology.
+         We use separate sim-node objects keyed by id so D3 internal
+         reordering never misaligns with our nodes[] array.           */
+      /* Use deterministic initial positions based on node index so the
+       force simulation converges to the same grid every time.
+       Without this, Math.random() gives different seeds each run.    */
+    const simNodes = nodes.map((d, i) => ({
+      id: d.id,
+      x: Math.cos(i / nodes.length * Math.PI * 2) * 80,
+      y: Math.sin(i / nodes.length * Math.PI * 2) * 80,
+    }));
+      const idSet    = new Set(nodes.map(d => d.id));
+      const simLinks = edges
+        .filter(e => idSet.has(e.source) && idSet.has(e.target))
+        .map(e => ({ source: e.source, target: e.target }));
+
+      const sim = d3.forceSimulation(simNodes)
+        .force('link',      d3.forceLink(simLinks).id(d => d.id).distance(60).strength(0.9))
+        .force('charge',    d3.forceManyBody().strength(-250))
+        .force('center',    d3.forceCenter(0, 0))
+        .force('collision', d3.forceCollide(25))
+        .stop();
+
+      for (let i = 0; i < 400; i++) sim.tick();
+
+      /* Map id → simulated (x,y) */
+      const posById = new Map(simNodes.map(sn => [sn.id, { x: sn.x || 0, y: sn.y || 0 }]));
+
+      /* ── Step 2: Sort nodes by sim position (scanline order) ──────
+         Sort by quantised-Y then X so spatial neighbours become
+         adjacent grid cells.                                         */
+      const BAND = 60; // px — y quantisation band width
+      const withPos = nodes.map((node, origIdx) => {
+        const p = posById.get(node.id) || { x: 0, y: 0 };
+        return { node, origIdx, sx: p.x, sy: p.y };
+      });
+
+      withPos.sort((a, b) => {
+        const ra = Math.round(a.sy / BAND);
+        const rb = Math.round(b.sy / BAND);
+        return ra !== rb ? ra - rb : a.sx - b.sx;
+      });
+
+      /* ── Step 3: Assign integer grid cells ────────────────────────
+         Fill row-by-row in sorted order.
+         result[origIdx] = [col, row]                                 */
+      const numCols = Math.max(1, Math.ceil(Math.sqrt(n)));
+      const numRows = Math.ceil(n / numCols);
+      const result  = new Array(n);
+
+      withPos.forEach(({ origIdx }, rank) => {
+        result[origIdx] = [rank % numCols, Math.floor(rank / numCols)];
+      });
+
+      /* Verify all slots filled */
+      for (let i = 0; i < n; i++) {
+        if (!Array.isArray(result[i])) {
+          console.warn('[grid] result[' + i + '] missing, using fallback');
+          result[i] = [i % numCols, Math.floor(i / numCols)];
+        }
+      }
+
+      /* ── Step 4: Convert to pixel world coordinates ───────────────
+         Centre the grid at SVG origin. GRID_SPACING = px per cell.  */
+      const S    = CONFIG.GRID_SPACING;
+      const offX = -((numCols - 1) * S) / 2;
+      const offY = -((numRows - 1) * S) / 2;
+
+      nodes.forEach((node, i) => {
+        const col  = result[i][0];
+        const row  = result[i][1];
+        node.gx   = col;
+        node.gy   = row;
+        node.gxPx = offX + col * S;
+        node.gyPx = offY + row * S;
+
+        /* Guard against NaN — fall back to simple row-major position */
+        if (!isFinite(node.gxPx) || !isFinite(node.gyPx)) {
+          node.gxPx = offX + (i % numCols) * S;
+          node.gyPx = offY + Math.floor(i / numCols) * S;
+        }
+        node.gridRadius = CONFIG.NODE_RADIUS_BY_TYPE[node.type] || CONFIG.NODE_RADIUS_BASE; // type-based grid radius
+      });
+
+      console.log('[grid] done:', n, 'nodes,', numCols, 'cols,', numRows, 'rows, spacing', S);
+      console.log('[grid] sample:', nodes.slice(0,3).map(nd =>
+        nd.id + '=(' + nd.gxPx.toFixed(0) + ',' + nd.gyPx.toFixed(0) + ')').join(' | '));
+
+      resolve({ cols: numCols, rows: numRows });
+
+    } catch (err) {
+      console.error('[grid] computeClusteredGridLayout failed:', err);
+      /* Emergency fallback: simple row-major grid, no clustering */
+      const n2    = nodes.length;
+      const cols2 = Math.max(1, Math.ceil(Math.sqrt(n2)));
+      const S     = CONFIG.GRID_SPACING;
+      const offX2 = -((cols2 - 1) * S) / 2;
+      const offY2 = -(( Math.ceil(n2/cols2) - 1) * S) / 2;
+      nodes.forEach((node, i) => {
+        node.gxPx = offX2 + (i % cols2) * S;
+        node.gyPx = offY2 + Math.floor(i / cols2) * S;
+        node.gx   = i % cols2;
+        node.gy   = Math.floor(i / cols2);
+      });
+      resolve({ cols: cols2, rows: Math.ceil(n2 / cols2) });
+    }
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ORTHOGONAL EDGE PATH BUILDER
+   ─────────────────────────────────────────────────────────────
+   Circuit-diagram style: edges jog 90° rather than going diagonal.
+   We use a simple "half-step" midpoint strategy:
+     - Travel horizontally to the midpoint X
+     - Then vertically to the target Y
+     - Then horizontally to the target X
+   This keeps paths readable without complex routing algorithms.
+
+   Parallel edges get a small perpendicular offset (jitter) to
+   prevent complete overlap on the same horizontal/vertical run.
+══════════════════════════════════════════════════════════════ */
+
+/**
+ * buildOrthogonalPath(x1, y1, x2, y2, jitter)
+ * Returns an SVG path `d` string for an orthogonal (right-angle) edge.
+ * jitter: small offset to separate parallel edges (default 0).
+ */
+function buildOrthogonalPath(x1, y1, x2, y2, jitter = 0) {
+  /* Mid-point X — the column where we make the vertical jog */
+  const mx = (x1 + x2) / 2 + jitter;
+  return `M ${x1} ${y1} L ${mx} ${y1} L ${mx} ${y2} L ${x2} ${y2}`;
+}
+
+/**
+ * buildOrthogonalPathShortened(x1, y1, x2, y2, targetRadius, jitter)
+ *
+ * Draws an L-shaped orthogonal path from (x1,y1) to (x2,y2) that:
+ *  - Goes horizontal to mid-X, then vertical to target Y, then horizontal.
+ *  - Pulls the endpoint back so the arrowhead clears the target node.
+ *  - Handles edge cases: same row (only horizontal), same col (only vertical).
+ *
+ * jitter: horizontal offset on the mid-X to separate parallel edges.
+ */
+function buildOrthogonalPathShortened(x1, y1, x2, y2, targetRadius, jitter = 0) {
+  const r  = (targetRadius ?? CONFIG.NODE_RADIUS_BASE) + 3;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+
+  /* ── Same row: pure horizontal line ── */
+  if (Math.abs(dy) < 2) {
+    const sign = dx >= 0 ? 1 : -1;
+    const ex   = x2 - sign * r;
+    return `M ${x1} ${y1} L ${ex} ${y2}`;
+  }
+
+  /* ── Same column: pure vertical line, shorten at bottom ── */
+  if (Math.abs(dx) < 2) {
+    const sign = dy >= 0 ? 1 : -1;
+    const ey   = y2 - sign * r;
+    return `M ${x1} ${y1} L ${x2} ${ey}`;
+  }
+
+  /* ── General case: H → V → H (with jitter on mid-X) ── */
+  const mx   = (x1 + x2) / 2 + jitter;
+  /* Last segment is horizontal from (mx, y2) → (x2, y2).
+     Shorten from x2 by r, clamped so we don't overshoot mx. */
+  const signX = dx >= 0 ? 1 : -1;
+  const minX  = mx + signX * r;               // closest safe endpoint
+  const endX  = dx >= 0
+    ? Math.max(minX, x2 - r)
+    : Math.min(minX, x2 + r);
+
+  return `M ${x1} ${y1} L ${mx} ${y1} L ${mx} ${y2} L ${endX} ${y2}`;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   5. RENDERING
+══════════════════════════════════════════════════════════════ */
+
+/* Module-level state shared between render + interaction */
+let SVG_EL, G_ROOT, ZOOM;    // D3 selections + zoom behaviour
+let g_edges, g_nodes;        // layer groups
+let nodeMap  = new Map();     // id → node datum
+let edgeData = [];            // processed edge array
+let selectedId = null;        // currently selected node id
+let currentLayout = 'radial'; // 'radial' | 'grid'
+
+/**
+ * renderGraph(nodes, edges, svgEl)
+ * Full render: edges (backgrounds + lines) then nodes.
+ */
+
+/* ── UTILITY: wrap text into lines of max N characters ─────────────
+   SVG text doesn't wrap. We split on spaces, accumulate words until
+   the line exceeds maxChars, then start a new line.                 */
+function wrapText(str, maxChars) {
+  if (!str) return [];
+  /* For scripts without spaces (Thai, CJK), split by grapheme clusters */
+  if (!str.includes(' ')) {
+    let graphemes;
+    try {
+      graphemes = [...new Intl.Segmenter().segment(str)].map(s => s.segment);
+    } catch (_) {
+      graphemes = [...str];
+    }
+    if (graphemes.length <= maxChars) return [str];
+    const lines = [];
+    for (let i = 0; i < graphemes.length; i += maxChars) {
+      lines.push(graphemes.slice(i, i + maxChars).join(''));
+    }
+    return lines;
+  }
+  /* Latin/spaced text: wrap on word boundaries */
+  if (str.length <= maxChars) return [str];
+  const words = str.split(' ');
+  const lines = [];
+  let current = '';
+  words.forEach(word => {
+    if ((current + (current ? ' ' : '') + word).length > maxChars) {
+      if (current) lines.push(current);
+      current = word;
+    } else {
+      current = current ? current + ' ' + word : word;
+    }
+  });
+  if (current) lines.push(current);
+  return lines;
+}
+
+/* ── UTILITY: wrap text to fit within maxPx pixel width ────────────
+   Approximates character width at a given font size (px).
+   Uses average char width ≈ fontSize * 0.55 for Latin/Thai mixed text.
+   Splits on spaces; if a single word exceeds maxPx it is kept as-is.  */
+/* wrapTextPx: pixel-width-aware line wrapping with Thai/CJK support.
+   For scripts without spaces, splits on grapheme cluster boundaries.
+   For Latin text with spaces, wraps on word boundaries.             */
+function wrapTextPx(str, maxPx, fontSize) {
+  if (!str) return [];
+  const avgCharW = fontSize * 0.58;
+  const maxChars = Math.max(3, Math.floor(maxPx / avgCharW));
+
+  /* Get grapheme clusters (handles Thai combining chars correctly) */
+  let graphemes;
+  try {
+    graphemes = [...new Intl.Segmenter().segment(str)].map(s => s.segment);
+  } catch (_) {
+    graphemes = [...str];
+  }
+
+  /* Check if text has spaces (Latin-style) — use word-wrap if so */
+  if (str.includes(' ')) {
+    return wrapText(str, maxChars);
+  }
+
+  /* No spaces (Thai, CJK etc.) — split strictly by grapheme count */
+  const lines = [];
+  let current = [];
+  graphemes.forEach(g => {
+    current.push(g);
+    if (current.length >= maxChars) {
+      lines.push(current.join(''));
+      current = [];
+    }
+  });
+  if (current.length > 0) lines.push(current.join(''));
+  return lines;
+}
+
+/* ── UTILITY: shorten a line endpoint by `offset` px ───────────────
+   Moves (x2,y2) toward (x1,y1) by `offset` pixels.
+   Used to keep arrowheads outside node circles.                      */
+function shortenEndpoint(x1, y1, x2, y2, offset) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  return { x2: x2 - (dx / len) * offset, y2: y2 - (dy / len) * offset };
+}
+
+/* ── UTILITY: compute shortened edge endpoints for a datum ──────────
+   Uses current node positions (passed as sx,sy,tx,ty world coords).
+   Returns { x1,y1,x2,y2 } with the target end pulled back.          */
+function edgeEndpoints(sx, sy, tx, ty, targetRadius) {
+  const offset = (targetRadius ?? CONFIG.NODE_RADIUS_BASE) + 3;
+  const { x2, y2 } = shortenEndpoint(sx, sy, tx, ty, offset);
+  return { x1: sx, y1: sy, x2, y2 };
+}
+
+/* ── Label truncation for radial view ───────────────────────────────
+   Uses Intl.Segmenter for grapheme-aware slicing (handles Thai combining
+   characters, CJK, etc.). Falls back to code-point spread if unavailable.
+   RADIAL_MAX is defined inside renderGraph's label section.             */
+const RADIAL_MAX_CHARS = 20; // max graphemes for radial label
+
+function truncateLabel(text) {
+  if (!text) return '';
+  let graphemes;
+  try {
+    graphemes = [...new Intl.Segmenter().segment(text)].map(s => s.segment);
+  } catch (_) {
+    graphemes = [...text];
+  }
+  if (graphemes.length <= RADIAL_MAX_CHARS) return text;
+  return graphemes.slice(0, RADIAL_MAX_CHARS - 1).join('') + '…';
+}
+
+/* ── Arrow marker selector — module-level so drawEdgesGrid/Radial can use it */
+
+/* ── Runtime CSS variable reader ───────────────────────────────────────
+   Instead of hardcoding hex values, read the live CSS custom property.
+   This means any value set by fetchColorConfig() is automatically used. */
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+
+/* Cache-buster for images — change this value to force reload of all images */
+const IMAGE_CACHE_BUST = Date.now();
+
+function arrowMarkerId(edgeType, muted = false) {
+  const suffix = muted ? '-muted' : '';
+  if (edgeType === 'shareholding')      return `url(#arrow-red${suffix})`;
+  if (edgeType === 'Past shareholding') return `url(#arrow-grey${suffix})`;
+  return `url(#arrow-black${suffix})`;
+}
+
+
+/* Draw a visual duplicate of focused edges into #g-edges-focus so they
+   render above muted edges. The originals stay in #g-edges with their
+   D3 data binding intact — only their colour changes to muted.
+   Call clearFocusLayer() on deselect to remove duplicates.           */
+function drawFocusLayer(edges, connectedEdgeSet, selectedId, delay = 0) {
+  const layer = d3.select('#g-edges-focus');
+  layer.selectAll('*').remove();
+
+  const FADE_DUR = 250; // ms fade-in duration
+
+  edges.forEach((e, i) => {
+    if (!connectedEdgeSet.has(i)) return;
+    const style  = EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT;
+    const isGrid = currentLayout === 'grid';
+    let el;
+
+    if (!isGrid) {
+      /* Radial: straight line at final position */
+      const s  = nodeMap.get(e.source), t = nodeMap.get(e.target);
+      const sx = e.source === selectedId ? 0 : (s?.x ?? 0);
+      const sy = e.source === selectedId ? 0 : (s?.y ?? 0);
+      const tx = e.target === selectedId ? 0 : (t?.x ?? 0);
+      const ty = e.target === selectedId ? 0 : (t?.y ?? 0);
+      const ep = edgeEndpoints(sx, sy, tx, ty, t?.radius);
+      el = layer.append('line')
+        .attr('class', 'edge-focus-dup')
+        .attr('pointer-events', 'none')
+        .attr('x1', ep.x1).attr('y1', ep.y1)
+        .attr('x2', ep.x2).attr('y2', ep.y2)
+        .attr('stroke', style.stroke)
+        .attr('stroke-width', 2)
+        .attr('stroke-dasharray', style.dash || null)
+        .attr('marker-end', arrowMarkerId(e.type, false));
+    } else {
+      /* Grid: copy the path `d` from the original element */
+      const origEl = document.querySelector(
+        `.edge-path[data-source="${CSS.escape(e.source)}"][data-target="${CSS.escape(e.target)}"]`
+      );
+      if (!origEl) return;
+      el = layer.append('path')
+        .attr('class', 'edge-focus-dup')
+        .attr('pointer-events', 'none')
+        .attr('d', origEl.getAttribute('d'))
+        .attr('fill', 'none')
+        .attr('stroke', style.stroke)
+        .attr('stroke-width', 2)
+        .attr('stroke-dasharray', style.dash || null)
+        .attr('marker-end', arrowMarkerId(e.type, false));
+    }
+
+    /* Fade in after delay (wait for node movement to finish) */
+    el.attr('opacity', 0)
+      .transition()
+      .delay(delay)
+      .duration(FADE_DUR)
+      .ease(d3.easeCubicOut)
+      .attr('opacity', 1);
+  });
+}
+
+function clearFocusLayer() {
+  d3.select('#g-edges-focus').selectAll('*').remove();
+}
+
+
+/* Reapply current EDGE_STYLES colours to all rendered edge elements.
+   Called after fetchColorConfig() updates the style objects so that
+   any edges already drawn get the sheet-defined colours.             */
+function reapplyEdgeColors() {
+  /* Edge lines / paths */
+  d3.selectAll('.edge-path').each(function(e) {
+    if (!e) return;
+    const style = EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT;
+    d3.select(this)
+      .attr('stroke', style.strokeMuted)
+      .attr('marker-end', arrowMarkerId(e.type, true));
+  });
+
+  /* Edge background stripes */
+  d3.selectAll('.edge-bg').each(function(e) {
+    if (!e) return;
+    const style = EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT;
+    d3.select(this).attr('stroke', style.strokeMuted || style.stroke);
+  });
+
+  /* Node circles — update stroke and fill with current CSS variable colours */
+  d3.selectAll('circle.node-circle').each(function(d) {
+    const node = d ? nodeMap.get(d.id) : null;
+    if (!node) return;
+    const loc  = node.register_location || node.location || '';
+    const type = (node.type || '').toLowerCase();
+    const fill = type === 'person'
+      ? cssVar('--people')
+      : type === 'government agency'
+      ? '#ffffff'
+      : locationColor(loc);
+    d3.select(this)
+      .attr('stroke', locationColor(loc))
+      .attr('fill', fill);
+  });
+
+  /* Update node label fills to use live CSS variable colours */
+  d3.selectAll('text.node-label')
+    .attr('fill', cssVar('--text-secondary'));
+
+  /* Arrow markers — re-colour after EDGE_STYLES updated by fetchColorConfig */
+  const markerColors = {
+    'arrow-black':       EDGE_STYLES['Non-shareholding/control relationship']?.stroke      || '#222243',
+    'arrow-red':         EDGE_STYLES['shareholding']?.stroke                               || '#3820ec',
+    'arrow-grey':        EDGE_STYLES['Past shareholding']?.stroke                          || '#8e9aff',
+    'arrow-black-muted': EDGE_STYLES['Non-shareholding/control relationship']?.strokeMuted || '#e8e8ee',
+    'arrow-red-muted':   EDGE_STYLES['shareholding']?.strokeMuted                         || '#e7ecff',
+    'arrow-grey-muted':  EDGE_STYLES['Past shareholding']?.strokeMuted                    || '#e7ecff',
+  };
+  Object.entries(markerColors).forEach(([id, color]) => {
+    const markerPath = document.querySelector(`#${id} path`);
+    if (markerPath) markerPath.setAttribute('fill', color);
+  });
+}
+
+function renderGraph(nodes, edges, svgEl) {
+  const svg    = d3.select(svgEl);
+  const width  = svgEl.clientWidth;
+  const height = svgEl.clientHeight;
+
+  /* Build lookup map */
+  nodeMap.clear();
+  nodes.forEach(n => nodeMap.set(n.id, n));
+
+  /* Compute layout (mutates nodes) */
+  const orbit = computeRadialLayout(nodes, width, height);
+  edgeData = edges; // store for interaction
+
+  /* ── Setup SVG ─────────────────────────────────────────────── */
+  svg.selectAll('*').remove(); // clear on re-render
+
+  /* Root group — starts at canvas centre */
+  G_ROOT = svg.append('g');
+
+  /* Zoom + pan behaviour.
+     We initialise the zoom with a translate(w/2,h/2) so the graph
+     starts centred. Storing ZOOM at module level lets switchLayout
+     programmatically reset the view when toggling layouts.          */
+  ZOOM = d3.zoom()
+    .scaleExtent([0.3, 5])
+    .on('zoom', e => G_ROOT.attr('transform', e.transform));
+
+  /* Apply initial centring transform through the zoom so D3's internal
+     state stays in sync — never set G_ROOT.attr('transform') directly */
+  svg.call(ZOOM)
+     .call(ZOOM.transform, d3.zoomIdentity.translate(width / 2, height / 2));
+
+  /* Click on empty SVG background → deselect */
+  /* Deselect only on clicking truly empty SVG/G_ROOT space.
+     Edges stop propagation so this won't fire on edge clicks. */
+  svg.on('click', function(event) {
+    const tgt = event.target;
+    const onNode  = tgt.closest('.node-g');
+    const onEdge  = tgt.closest('.edge-path') || tgt.tagName === 'line' || tgt.tagName === 'path';
+    const onLabel = tgt.closest('.edge-label-g') || tgt.closest('.node-label');
+    if (selectedId && !onNode && !onEdge && !onLabel) {
+      clearSelection(nodes, edges);
+    }
+  });
+
+  /* Orbit ring removed */
+  /* Layer order: edge-bg → edges → edge-labels → nodes
+     Nodes must be on top so hover/click targets work correctly.     */
+  G_ROOT.append('g').attr('id', 'g-edge-bg');
+  g_edges = G_ROOT.append('g').attr('id', 'g-edges');
+  // g-edge-labels appended after g-node-labels (see below) so labels render on top
+  G_ROOT.append('g').attr('id', 'g-edges-focus'); // focused edge duplicates render above all
+  g_nodes = G_ROOT.append('g').attr('id', 'g-nodes');
+
+  /* ── SVG <defs>: arrowhead markers for each edge colour ─────────
+     We define four markers (black-solid, black-dashed, red-solid,
+     red-dashed) so each edge type gets a correctly coloured arrow.
+     refX is offset so the arrow tip sits at the node edge, not inside. */
+  const defs = svg.append('defs');
+
+  /* Active + muted arrow markers for each edge type */
+  const arrowDefs = [
+    { id: 'arrow-black',       color: '#222243' },
+    { id: 'arrow-red',         color: '#3820ec' },
+    { id: 'arrow-grey',        color: '#8e9aff' },
+    { id: 'arrow-black-muted', color: '#e8e8ee' },
+    { id: 'arrow-red-muted',   color: '#e7ecff' },
+    { id: 'arrow-grey-muted',  color: '#e7ecff' },
+  ];
+
+  arrowDefs.forEach(({ id, color }) => {
+    defs.append('marker')
+      .attr('id', id)
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 6)
+      .attr('refY', 0)
+      .attr('markerWidth', 4)
+      .attr('markerHeight', 4)
+      .attr('orient', 'auto')
+      .append('path')
+        .attr('d', 'M0,-5L10,0L0,5')
+        .attr('fill', color);
+  });
+
+  /* ── Draw shareholding background stripes (amount-scaled width) ─
+     These are purely decorative — wider stroke = larger share amount.
+     Opacity 0.5 as requested.                                        */
+  d3.select('#g-edge-bg')
+    .selectAll('line.edge-bg')
+    .data(edges.filter(e => (EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT).bg))
+    .join('line')
+    .attr('class', 'edge-bg')
+    .attr('x1', e => nodeMap.get(e.source)?.x ?? 0)
+    .attr('y1', e => nodeMap.get(e.source)?.y ?? 0)
+    .attr('x2', e => nodeMap.get(e.target)?.x ?? 0)
+    .attr('y2', e => nodeMap.get(e.target)?.y ?? 0)
+    .attr('stroke', e => (EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT).strokeMuted)
+    .attr('stroke-opacity', 0.5)
+    /* Width reflects share amount; capped so it stays readable */
+    .attr('stroke-width', e => clamp((e.amount / 5e6) * 20, 2, 40))
+    .attr('pointer-events', 'none');
+
+  /* ── Draw main edge lines ────────────────────────────────────────
+     Lines are shortened at the TARGET end so the arrowhead sits just
+     outside the target node's circumference.                         */
+  d3.select('#g-edges')
+    .selectAll('line.edge-path')
+    .data(edges)
+    .join('line')
+    .attr('class', 'edge-path')
+    .attr('data-source', e => e.source)
+    .attr('data-target', e => e.target)
+    .each(function(e) {
+      const s = nodeMap.get(e.source), t = nodeMap.get(e.target);
+      const ep = edgeEndpoints(s?.x ?? 0, s?.y ?? 0, t?.x ?? 0, t?.y ?? 0, t?.radius);
+      d3.select(this)
+        .attr('x1', ep.x1).attr('y1', ep.y1)
+        .attr('x2', ep.x2).attr('y2', ep.y2);
+    })
+    .attr('stroke', e => (EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT).stroke)
+    .attr('stroke-width', 1.5)
+    .attr('stroke-dasharray', e => (EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT).dash)
+    .attr('marker-end', e => arrowMarkerId(e.type, true))
+    .on('click', e => e.stopPropagation()) // prevent bubbling to SVG background
+    ; // hover handled by CSS :hover pseudo-class
+
+  /* ── Edge labels aligned to the line angle ───────────────────────
+     Each label uses a <text> with a transform="rotate(angle)" so the
+     text runs parallel to its edge. We flip labels on the left half
+     of the graph so they are always readable (not upside-down).
+     Labels start hidden (opacity 0) and appear on node selection.   */
+  /* ── Draw nodes ─────────────────────────────────────────────── */
+  const nodeGroups = d3.select('#g-nodes')
+    .selectAll('g.node-g')
+    .data(nodes, d => d.id)
+    .join('g')
+    .attr('class', 'node-g')
+    .attr('data-node-id', d => d.id)
+    .attr('transform', d => `translate(${d.x},${d.y})`)
+    .style('cursor', 'pointer')
+    .on('click', (event, d) => { event.stopPropagation(); onNodeClick(d, nodes, edges); })
+    .on('mouseenter', function(event, d) {
+      /* White stroke ring on hovered node */
+      d3.select(this).select('circle.node-circle')
+        .attr('stroke', cssVar('--text-primary'))
+        .attr('stroke-width', 2.5);
+      /* White label text */
+      d3.select(`text[data-label-for="${d.id}"]`).classed('label-hovered', true);
+    })
+    .on('mouseleave', function(event, d) {
+      /* Restore node stroke */
+      d3.select(this).select('circle.node-circle')
+        .attr('stroke', locationColor(d.register_location))
+        .attr('stroke-width', 1.5);
+      /* Restore label colour */
+      d3.select(`text[data-label-for="${d.id}"]`).classed('label-hovered', false);
+    });
+
+  /* Background circle */
+  nodeGroups.append('circle')
+    .attr('class', 'node-circle')
+    .attr('r', d => d.radius)
+    .attr('fill', d => {
+      if (d.type === 'person')            return cssVar('--people');
+      if (d.type === 'government agency') return '#fff';
+      return locationColor(d.register_location);
+    })
+    .attr('stroke', d => locationColor(d.register_location))
+    .attr('stroke-width', 1.5);
+
+  /* Image clipPath + image element for nodes that have image_name */
+  nodeGroups.filter(d => d.image_name)
+    .each(function(d) {
+      const g   = d3.select(this);
+      const uid = `clip-${d.id.replace(/[^a-z0-9]/gi, '_')}`;
+
+      let defsEl = svg.select('defs');
+      if (defsEl.empty()) defsEl = svg.append('defs');
+
+      defsEl.append('clipPath')
+        .attr('id', uid)
+        .append('circle')
+          .attr('r', d.radius - 1);
+
+      const rawName = (d.image_name || '').trim().replace(/^images\//, '');
+      const withExt = rawName.includes('.') ? rawName : `${rawName}.png`;
+      const imgPath = `images/${withExt}?v=${IMAGE_CACHE_BUST}`;
+      console.log(`[node image] id="${d.id}" → ${imgPath}`);
+      if (window.__debugMode) {
+        const dl = document.getElementById('debug-log');
+        if (dl) dl.innerHTML += `<div>${d.id} → ${imgPath}</div>`;
+      }
+
+      g.append('image')
+        .attr('href', imgPath)
+        .attr('x', -(d.radius - 1))
+        .attr('y', -(d.radius - 1))
+        .attr('width',  (d.radius - 1) * 2)
+        .attr('height', (d.radius - 1) * 2)
+        .attr('clip-path', `url(#${uid})`)
+        .attr('preserveAspectRatio', 'xMidYMid slice')
+        .on('error', function() {
+          console.warn(`[node image] FAILED: ${imgPath}`);
+          if (window.__debugMode) {
+            const dl = document.getElementById('debug-log');
+            if (dl) dl.innerHTML += `<div style='color:#e05c5c'>FAIL: ${imgPath}</div>`;
+          }
+        });
+    });
+
+  /* ── Node labels ─────────────────────────────────────────────────────
+     Placed in a TOP-LEVEL group using WORLD coordinates — not inside the
+     node <g> — so local transforms don't interfere with positioning.
+
+     Gap: label starts at (node.radius + LABEL_GAP) px from node centre,
+     ensuring no text ever overlaps the circle.
+
+     Anchor: flips based on which half of the orbit the node sits on,
+     so text always grows AWAY from the centre.
+
+     Collision: iterative Y-axis separation in world space, 20 passes max.
+     Wrapping: text > MAX_CHARS split on word boundaries into <tspan> rows. */
+
+  const LABEL_FONT   = 10;
+  const LABEL_LINE   = 13;    // px per line
+  const LABEL_GAP    = 8;     // px between node edge and label
+  // truncateLabel uses RADIAL_MAX_CHARS = 20 (module-level constant)
+  const MAX_ITERS    = 20;
+  const MIN_SEP      = 2;     // minimum px gap between label bounding boxes
+
+  /* truncateLabel() is defined at module level (see below renderGraph) */
+
+  /* Separate SVG group so labels sit above everything */
+  const gLabels = G_ROOT.append('g').attr('id', 'g-node-labels');
+
+  /* Edge labels group — appended LAST so it renders above all nodes */
+  const gEdgeLabels = G_ROOT.append('g').attr('id', 'g-edge-labels');
+
+  /* Build one metadata object per node */
+  const labelData = nodes.map(d => {
+    const angleRad  = (d.angle - 90) * (Math.PI / 180);
+    const a         = ((d.angle % 360) + 360) % 360;
+    const rawText   = d.name_th || d.id;
+    const label     = truncateLabel(rawText);   // single truncated line
+    const lines     = [label];                  // always one line in radial
+    const height    = LABEL_LINE;
+
+    /* Anchor direction: right half → start (text grows right),
+       left half → end (text grows left), top/bottom → middle  */
+    const anchor = (a > 10 && a < 170) ? 'start'
+                 : (a > 190 && a < 350) ? 'end'
+                 : 'middle';
+
+    /* World position of the label anchor point.
+       Distance from node centre = radius + gap.
+       This puts the ANCHOR at the node edge — for 'start' and 'end'
+       anchors the text grows outward, never back over the circle.    */
+    const dist = d.radius + LABEL_GAP;
+    const wx   = d.x + Math.cos(angleRad) * dist;
+    const wy   = d.y + Math.sin(angleRad) * dist;
+
+    return { d, lines, height, wx, wy, nudge: 0, anchor };
+  });
+
+  /* Iterative Y collision resolution in world space */
+  for (let iter = 0; iter < MAX_ITERS; iter++) {
+    labelData.sort((a, b) => (a.wy + a.nudge) - (b.wy + b.nudge));
+    let moved = false;
+    for (let i = 0; i < labelData.length - 1; i++) {
+      const A = labelData[i], B = labelData[i + 1];
+      const aBot = (A.wy + A.nudge) + A.height / 2;
+      const bTop = (B.wy + B.nudge) - B.height / 2;
+      const overlap = aBot - bTop + MIN_SEP;
+      if (overlap > 0) {
+        A.nudge -= overlap / 2;
+        B.nudge += overlap / 2;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+
+  /* Render each label as a rotated <text> aligned to its node's angle.
+     Strategy:
+     - Anchor = point on the node's circle edge + LABEL_GAP outward
+     - transform = translate(anchorX, anchorY) rotate(angleDeg)
+     - In local rotated frame: x=0 is anchor, tspan x=0 y=lineOffset
+     - Left-half nodes get +180° flip so text is never upside-down
+     - text-anchor: 'start' so text grows outward (away from circle)   */
+  labelData.forEach(({ d, lines, height, wx, wy, nudge, anchor }) => {
+    /* Anchor: at node edge + gap, along the radial direction */
+    const angleRad = (d.angle - 90) * (Math.PI / 180);
+    const dist     = d.radius + LABEL_GAP;
+    const anchorX  = d.x + Math.cos(angleRad) * dist;
+    const anchorY  = d.y + Math.sin(angleRad) * dist;
+
+    /* Raw rotation: aligns the text x-axis with the outward radial direction.
+       rotateDeg = d.angle - 90 because SVG rotation 0° = rightward,
+       but our angle 0° = top (clockwise from top).
+       Example: angle=0 (top)    → rotateDeg=-90 → x-axis points up    (outward=up)    ✓
+                angle=90 (right) → rotateDeg=0   → x-axis points right (outward=right) ✓
+                angle=180 (bot)  → rotateDeg=90  → x-axis points down  (outward=down)  ✓
+                angle=270 (left) → rotateDeg=180 → x-axis points left  (outward=left)  ✓
+       No flip needed — text-anchor:start always grows outward.
+       BUT: angles 90–270 have rotateDeg 0–180 which means the text
+       baseline runs at angles where it would read normally.
+       Angles 270–360 and 0–90 have rotateDeg -90 to 0 / 180–270 —
+       text is sideways. This is intentional (spoke-style).
+       The only time text is upside-down is rotateDeg in (90°, 270°),
+       i.e. when d.angle is in (180°, 360°). Flip those. */
+    let rotateDeg = d.angle - 90;
+    // Normalise to [-180, 180]
+    while (rotateDeg >  180) rotateDeg -= 360;
+    while (rotateDeg < -180) rotateDeg += 360;
+    // If the rotated x-axis points generally leftward (rotateDeg ±90..180),
+    // the text would be upside-down — flip 180° and use end-anchor so it
+    // still grows outward (now in the -x direction of the flipped frame).
+    const needsFlip = rotateDeg > 90 || rotateDeg < -90;
+    if (needsFlip) rotateDeg += rotateDeg > 0 ? -180 : 180;
+    const textAnchor = needsFlip ? 'end' : 'start';
+
+    const totalH  = lines.length * LABEL_LINE;
+    const startY  = -totalH / 2 + LABEL_LINE / 2;
+
+    const text = d.name_th || d.id;
+    const textEl = gLabels.append('text')
+      .attr('class', 'node-label')
+      .attr('data-label-for', d.id)
+      .attr('data-raw-text', text)
+      .attr('data-ox', anchorX)
+      .attr('data-oy', anchorY)
+      .attr('data-rotate', rotateDeg)
+      .attr('data-text-anchor', textAnchor)
+      .attr('transform', `translate(${anchorX},${anchorY}) rotate(${rotateDeg})`)
+      .attr('text-anchor', textAnchor)
+      .attr('dominant-baseline', 'middle')
+      .attr('font-size', LABEL_FONT)
+      .attr('font-family', "'IBM Plex Sans Thai Looped', sans-serif")
+      .attr('fill', cssVar('--text-secondary'))
+      .attr('pointer-events', 'none');
+
+    lines.forEach((line, li) => {
+      textEl.append('tspan')
+        .attr('x', 0)
+        .attr('y', startY + li * LABEL_LINE)
+        .text(line);
+    });
+  });
+
+
+  /* Edge labels — delegate to drawEdgeLabelsForLayout which handles
+     both positioning and overlap avoidance.
+     Called here for the initial radial render; called again by
+     switchLayout whenever the layout changes.                     */
+  drawEdgeLabelsForLayout(edges, gEdgeLabels);
+
+
+  SVG_EL = svgEl;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   6. INTERACTION — node click, highlight, panel update
+══════════════════════════════════════════════════════════════ */
+
+/**
+ * onNodeClick(datum, nodes, edges)
+ *
+ * RADIAL MODE: selected node moves to centre (0,0), others stay on orbit.
+ * GRID MODE:   nothing moves — only highlight/fade classes are toggled.
+ *              Edges stay exactly where they are.
+ */
+function onNodeClick(datum, nodes, edges) {
+  if (selectedId === datum.id) { clearSelection(nodes, edges); return; }
+
+  /* Deselect highlight filter so node connection edges become visible */
+  if (activeHighlight) {
+    document.querySelectorAll('.highlight-pill').forEach(b => b.classList.remove('active'));
+    applyHighlightFilter(null, nodes);
+  }
+
+  const prevId = selectedId;
+  selectedId   = datum.id;
+
+  /* Identify connected nodes and edges.
+     connectedEdgeSet stores edge indices for RADIAL mode (line elements
+     in DOM order match edges[] order).
+     For GRID mode we check data-source / data-target attributes directly
+     since drawEdgesGrid iterates sourceGroups (Map), not edges[] order.  */
+  const connectedIds    = new Set([datum.id]);
+  const connectedEdgeSet = new Set();   // used by radial mode only
+  edges.forEach((e, i) => {
+    if (e.source === datum.id || e.target === datum.id) {
+      connectedIds.add(e.source);
+      connectedIds.add(e.target);
+      connectedEdgeSet.add(i);
+    }
+  });
+
+  const DURATION = 500;
+  const ease     = d3.easeCubicInOut;
+
+  if (currentLayout === 'grid') {
+    /* ── GRID MODE: highlight only, nothing moves ──────────────────── */
+
+    /* Nodes: fade/highlight via CSS classes + opacity only */
+    d3.selectAll('.node-g').each(function(d) {
+      const isFocused  = connectedIds.has(d.id);
+      const isSelected = d.id === datum.id;
+      d3.select(this)
+        .classed('faded',          !isFocused)
+        .classed('highlighted',    isFocused)
+        .classed('node-selected',  isSelected)
+        .classed('node-connected', isFocused && !isSelected)
+        .transition('focus').duration(DURATION).ease(ease)
+        .style('opacity', isFocused ? 1 : CONFIG.FADE_OPACITY);
+    });
+
+    /* Labels: fade non-connected, highlight selected */
+    d3.selectAll('text.node-label').each(function() {
+      const id        = d3.select(this).attr('data-label-for');
+      const isFocused = connectedIds.has(id);
+      const isCenter  = id === datum.id;
+      d3.select(this)
+        .transition('focus').duration(DURATION).ease(ease)
+        .attr('opacity', isFocused ? 1 : 0.1)
+        .attr('fill', isCenter ? cssVar('--text-primary') : cssVar('--text-muted'));
+    });
+
+    /* Edges: highlight connected, fade others — NO position change.
+       Use data-source / data-target attributes to identify connected edges —
+       NOT the loop index, which is unreliable when drawEdgesGrid iterates
+       through a Map (sourceGroups) rather than the original edges[] array.
+       Inline styles override the attr/style set during appendEdgePath.    */
+    /* Edges: colour-swap focus/muted, raise focused to top (SVG z-order) */
+    d3.selectAll('.edge-path').each(function(e) {
+      const src      = d3.select(this).attr('data-source');
+      const tgt      = d3.select(this).attr('data-target');
+      const isFocused = src === datum.id || tgt === datum.id;
+      const style    = e ? (EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT) : EDGE_STYLE_DEFAULT;
+      d3.select(this)
+        .classed('edge-focused', isFocused)
+        .classed('edge-faded',   !isFocused)
+        .style('stroke-width', '1px')
+        .attr('stroke', style.strokeMuted)  // all originals go muted
+        .attr('marker-end', arrowMarkerId(e?.type, true));
+    });
+    /* Draw focused edges in top layer for z-order */
+    drawFocusLayer(edges, connectedEdgeSet, datum.id, 150);
+    /* edge-bg elements have datum bound via .datum(edgeDatum) in appendBgStripe */
+    d3.selectAll('.edge-bg').each(function(e) {
+      const isConn = e && (e.source === datum.id || e.target === datum.id);
+      d3.select(this).style('opacity', isConn ? 0.5 : 0.03);
+    });
+
+    /* Edge labels: show connected ones at their current midpoint */
+    d3.selectAll('.edge-label-g').each(function() {
+      const src    = d3.select(this).attr('data-source');
+      const tgt    = d3.select(this).attr('data-target');
+      const isConn = src === datum.id || tgt === datum.id;
+      d3.select(this).attr('opacity', isConn ? 1 : 0);
+    });
+
+  } else {
+    /* ── RADIAL MODE: selected node moves to centre ────────────────── */
+
+    /* Nodes */
+    d3.selectAll('.node-g').each(function(d) {
+      const isFocused  = connectedIds.has(d.id);
+      const isSelected = d.id === datum.id;
+      d3.select(this)
+        .classed('faded',          !isFocused)
+        .classed('highlighted',    isFocused)
+        .classed('node-selected',  isSelected)
+        .classed('node-connected', isFocused && !isSelected)
+        .transition('focus').duration(DURATION).ease(ease)
+        .attr('transform', isSelected ? 'translate(0,0)' : `translate(${d.x},${d.y})`)
+        .style('opacity', isFocused ? 1 : CONFIG.FADE_OPACITY);
+      /* Restore circle to uniform radial radius */
+      const node = nodeMap.get(d.id);
+      if (node) {
+        d3.select(this).select('circle.node-circle')
+          .transition('focus').duration(DURATION).ease(ease)
+          .attr('r', node.radius);
+      }
+    });
+
+    /* Labels */
+    const LABEL_GAP = 8, LABEL_LINE = 13;
+    d3.selectAll('text.node-label').each(function() {
+      const id        = d3.select(this).attr('data-label-for');
+      const isFocused = connectedIds.has(id);
+      const isCenter  = id === datum.id;
+      const isPrev    = id === prevId;
+      const ox        = +d3.select(this).attr('data-ox') || 0;
+      const oy        = +d3.select(this).attr('data-oy') || 0;
+      const node      = nodeMap.get(id);
+
+      if (isCenter) {
+        /* Selected node: reset transform to no rotation (horizontal text),
+           show full text wrapped at 15 chars, aligned left of circle.    */
+        const newX   = (node?.radius ?? CONFIG.NODE_RADIUS_BASE) + LABEL_GAP;
+        const rawT   = d3.select(this).attr('data-raw-text') || (node?.name_th || id);
+        const flines = wrapText(rawT, 15);
+        const totalH = flines.length * LABEL_LINE;
+        const startY = -totalH / 2 + LABEL_LINE / 2;
+
+        d3.select(this)
+          .attr('text-anchor', 'start')
+          .attr('transform', 'translate(0,0) rotate(0)')  // at origin, no rotation
+          .attr('opacity', 1)
+          .attr('fill', cssVar('--text-primary'));
+
+        d3.select(this).selectAll('tspan').remove();
+        flines.forEach((line, li) => {
+          d3.select(this).append('tspan')
+            .attr('x', newX)
+            .attr('y', startY + li * LABEL_LINE)
+            .text(line);
+        });
+      } else if (isPrev) {
+        /* Restore previous centre node label to rotated position */
+        const rotateDeg2 = +d3.select(this).attr('data-rotate') || 0;
+        const rawT2  = d3.select(this).attr('data-raw-text') || '';
+        const label2 = truncateLabel(rawT2);
+        const anchor2 = d3.select(this).attr('data-text-anchor') || 'start';
+        d3.select(this)
+          .attr('text-anchor', anchor2)
+          .attr('transform', `translate(${ox},${oy}) rotate(${rotateDeg2})`);
+        d3.select(this).selectAll('tspan').remove();
+        d3.select(this).append('tspan')
+          .attr('x', 0).attr('y', 0).text(label2);
+        d3.select(this).transition('focus').duration(DURATION).ease(ease)
+          .attr('opacity', isFocused ? 1 : 0.15).attr('fill', cssVar('--text-secondary'));
+      } else {
+        d3.select(this).transition('focus').duration(DURATION).ease(ease)
+          .attr('opacity', isFocused ? 1 : 0.15).attr('fill', cssVar('--text-secondary'));
+      }
+    });
+
+    /* Edges — move with the selected node, swap colour for focus/muted */
+    d3.selectAll('.edge-path').each(function(e, i) {
+      const isFocused = connectedEdgeSet.has(i);
+      const sx = e.source === datum.id ? 0 : (nodeMap.get(e.source)?.x ?? 0);
+      const sy = e.source === datum.id ? 0 : (nodeMap.get(e.source)?.y ?? 0);
+      const tx = e.target === datum.id ? 0 : (nodeMap.get(e.target)?.x ?? 0);
+      const ty = e.target === datum.id ? 0 : (nodeMap.get(e.target)?.y ?? 0);
+      const ep = edgeEndpoints(sx, sy, tx, ty, nodeMap.get(e.target)?.radius);
+      const style = EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT;
+      d3.select(this)
+        .classed('edge-focused', isFocused)
+        .classed('edge-faded',   !isFocused)
+        .attr('stroke', style.strokeMuted)  // muted; focused drawn in top layer
+        .attr('marker-end', arrowMarkerId(e.type, true))
+        .transition('focus').duration(DURATION).ease(ease)
+        .attr('x1', ep.x1).attr('y1', ep.y1)
+        .attr('x2', ep.x2).attr('y2', ep.y2);
+    });
+    /* Draw focused edges in top layer */
+    /* Delay = node movement duration so edges appear after node arrives */
+    drawFocusLayer(edges, connectedEdgeSet, datum.id, DURATION);
+
+    d3.selectAll('.edge-bg').each(function(e) {
+      const isConn = e.source === datum.id || e.target === datum.id;
+      const sx = e.source === datum.id ? 0 : (nodeMap.get(e.source)?.x ?? 0);
+      const sy = e.source === datum.id ? 0 : (nodeMap.get(e.source)?.y ?? 0);
+      const tx = e.target === datum.id ? 0 : (nodeMap.get(e.target)?.x ?? 0);
+      const ty = e.target === datum.id ? 0 : (nodeMap.get(e.target)?.y ?? 0);
+      d3.select(this)
+        .transition('focus').duration(DURATION).ease(ease)
+        .attr('x1', sx).attr('y1', sy).attr('x2', tx).attr('y2', ty)
+        .style('opacity', isConn ? 0.5 : 0.03);
+    });
+
+    /* Edge labels — animate to midpoint of the (possibly moved) edge */
+    d3.selectAll('.edge-label-g').each(function() {
+      const src    = d3.select(this).attr('data-source');
+      const tgt    = d3.select(this).attr('data-target');
+      const isConn = src === datum.id || tgt === datum.id;
+      /* Node positions: selected node is now at (0,0) */
+      const sx2 = src === datum.id ? 0 : (nodeMap.get(src)?.x ?? 0);
+      const sy2 = src === datum.id ? 0 : (nodeMap.get(src)?.y ?? 0);
+      const tx2 = tgt === datum.id ? 0 : (nodeMap.get(tgt)?.x ?? 0);
+      const ty2 = tgt === datum.id ? 0 : (nodeMap.get(tgt)?.y ?? 0);
+      const rrdx = tx2 - sx2, rrdy = ty2 - sy2;
+      const rrlen = Math.sqrt(rrdx*rrdx + rrdy*rrdy) || 1;
+      const rrux = rrdx/rrlen, rruy = rrdy/rrlen;
+      const rawA2 = Math.atan2(rrdy, rrdx) * (180 / Math.PI);
+      const isLeft2 = rawA2 > 90 || rawA2 < -90;
+      const ang2 = isLeft2 ? rawA2 + 180 : rawA2;
+      const midX2 = (sx2 + tx2) / 2, midY2 = (sy2 + ty2) / 2;
+      const mx  = isLeft2 ? midX2 + rrux * 15 : midX2;
+      const my  = isLeft2 ? midY2 + rruy * 15 : midY2;
+      d3.select(this)
+        .transition('focus').duration(DURATION).ease(ease)
+        .attr('transform', `translate(${mx},${my}) rotate(${ang2})`)
+        .attr('opacity', isConn ? 1 : 0);
+    });
+  }
+
+  updateRightPanel(datum, edges);
+}
+
+/**
+ * clearSelection(nodes, edges)
+ * RADIAL: animate selected node back to orbit.
+ * GRID:   just remove highlight classes, no movement.
+ */
+function clearSelection(nodes, edges) {
+  const prevId = selectedId;
+  selectedId   = null;
+
+  const DURATION = 400;
+  const ease     = d3.easeCubicInOut;
+
+  /* Fully reset ALL visual state — classes, inline styles, strokes */
+  d3.selectAll('.node-g').each(function(d) {
+    const node = nodeMap.get(d.id);
+    d3.select(this)
+      .classed('faded highlighted node-selected node-connected', false)
+      .interrupt('focus')
+      .style('opacity', null);        // remove any inline opacity
+    this.style.removeProperty('opacity'); // belt + suspenders
+
+    /* Reset circle stroke to default location colour, remove any ring */
+    d3.select(this).select('circle.node-circle')
+      .interrupt('focus')
+      .attr('stroke', node ? locationColor(node.register_location) : '#888880')
+      .attr('stroke-width', 1.5);
+  });
+
+  clearFocusLayer(); // remove focused edge duplicates from top layer
+  d3.selectAll('.edge-path')
+    .classed('edge-focused edge-faded', false)
+    .style('stroke-width', '1.5px');
+
+  d3.selectAll('.edge-bg')
+    .interrupt('focus')
+    .style('opacity', null)
+    .attr('opacity', null);
+
+  d3.selectAll('text.node-label')
+    .interrupt('focus')
+    .attr('opacity', 1)
+    .attr('fill', cssVar('--text-secondary'));
+
+  d3.selectAll('.edge-label-g').attr('opacity', 0);
+
+  if (currentLayout === 'grid') {
+    /* GRID: restore edge to muted colour (no opacity change) */
+    d3.selectAll('.edge-path').each(function(e) {
+      if (e) {
+        const style = EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT;
+        d3.select(this)
+          .attr('stroke', style.strokeMuted || style.stroke)
+          .attr('marker-end', arrowMarkerId(e.type, true))
+          .style('stroke-width', '1.5px');
+      } else {
+        d3.select(this).style('stroke-width', '1.5px');
+      }
+    });
+    /* Just restore label positions to their grid locations */
+    const LABEL_GAP = 8, LABEL_LINE = 13;
+    d3.selectAll('text.node-label').each(function() {
+      const id   = d3.select(this).attr('data-label-for');
+      const node = nodeMap.get(id);
+      if (!node) return;
+      /* Grid: label below node, centre-aligned, 16px gap, wrapped at 60px */
+      const GRID_GAP  = 16;
+      const GRID_FONT = 10;
+      const nx = node.gxPx;
+      const ny = node.gyPx + (node.gridRadius || node.radius) + GRID_GAP;
+      const rawText   = d3.select(this).attr('data-raw-text') ||
+                        d3.select(this).selectAll('tspan').nodes()
+                          .map(t => t.textContent).join(' ');
+      d3.select(this).attr('data-raw-text', rawText);
+      const newLines  = wrapTextPx(rawText, 87, GRID_FONT);
+      d3.select(this).selectAll('tspan').remove();
+      newLines.forEach((line, li) => {
+        d3.select(this).append('tspan')
+          .attr('x', nx)
+          .attr('y', ny + li * LABEL_LINE)
+          .text(line);
+      });
+      d3.select(this).attr('text-anchor', 'middle');
+    });
+
+  } else {
+    /* RADIAL: animate all nodes back to their orbit positions.
+       Also restore circle radius to node.radius (uniform in radial)
+       in case a prior grid visit left it at GRID_NODE_RADIUS.      */
+    d3.selectAll('.node-g').each(function(d) {
+      const node = nodeMap.get(d.id);
+      if (!node) return;
+      d3.select(this)
+        .transition('focus').duration(DURATION).ease(ease)
+        .attr('transform', `translate(${d.x},${d.y})`);
+      /* Restore circle size */
+      d3.select(this).select('circle.node-circle')
+        .transition('focus').duration(DURATION).ease(ease)
+        .attr('r', node.radius);
+      /* Restore clip-path and image size */
+      const uid = `clip-${d.id.replace(/[^a-z0-9]/gi, '_')}`;
+      d3.select(`#${uid} circle`)
+        .transition('focus').duration(DURATION).ease(ease)
+        .attr('r', node.radius - 1);
+      d3.select(this).select('image')
+        .transition('focus').duration(DURATION).ease(ease)
+        .attr('x', -(node.radius - 1)).attr('y', -(node.radius - 1))
+        .attr('width', (node.radius - 1) * 2).attr('height', (node.radius - 1) * 2);
+    });
+
+    /* Restore edges to original positions and active colour */
+    d3.selectAll('.edge-path').each(function(e) {
+      const s = nodeMap.get(e.source), t = nodeMap.get(e.target);
+      const ep = edgeEndpoints(s?.x ?? 0, s?.y ?? 0, t?.x ?? 0, t?.y ?? 0, t?.radius);
+      const style = EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT;
+      d3.select(this)
+        .attr('stroke', style.strokeMuted || style.stroke)
+        .attr('marker-end', arrowMarkerId(e.type, true))
+        .transition('focus').duration(DURATION).ease(ease)
+        .attr('x1', ep.x1).attr('y1', ep.y1)
+        .attr('x2', ep.x2).attr('y2', ep.y2);
+    });
+
+    d3.selectAll('.edge-bg').each(function(e) {
+      const s = nodeMap.get(e.source), t = nodeMap.get(e.target);
+      d3.select(this)
+        .transition('focus').duration(DURATION).ease(ease)
+        .attr('x1', s?.x ?? 0).attr('y1', s?.y ?? 0)
+        .attr('x2', t?.x ?? 0).attr('y2', t?.y ?? 0);
+    });
+
+    /* Restore labels to radial positions */
+    const LABEL_LINE = 13;
+    d3.selectAll('text.node-label').each(function() {
+      /* Radial restore: truncated label at original rotated transform */
+      const ox        = +d3.select(this).attr('data-ox') || 0;
+      const oy        = +d3.select(this).attr('data-oy') || 0;
+      const rotateDeg = +d3.select(this).attr('data-rotate') || 0;
+      const id        = d3.select(this).attr('data-label-for');
+      const node      = nodeMap.get(id);
+      if (!node) return;
+      const rawT   = d3.select(this).attr('data-raw-text') || '';
+      const label  = truncateLabel(rawT);
+      /* Restore correct text-anchor (left-half nodes use 'end') */
+      const storedAnchor = d3.select(this).attr('data-text-anchor') || 'start';
+      d3.select(this)
+        .interrupt('focus')
+        .attr('text-anchor', storedAnchor)
+        .attr('transform', `translate(${ox},${oy}) rotate(${rotateDeg})`);
+      d3.select(this).selectAll('tspan').remove();
+      d3.select(this).append('tspan')
+        .attr('x', 0).attr('y', 0).text(label);
+    });
+
+    /* Restore edge label positions */
+    d3.selectAll('.edge-label-g').each(function() {
+      const src = d3.select(this).attr('data-source');
+      const tgt = d3.select(this).attr('data-target');
+      const s = nodeMap.get(src), t = nodeMap.get(tgt);
+      const mx = ((s?.x ?? 0) + (t?.x ?? 0)) / 2;
+      const my = ((s?.y ?? 0) + (t?.y ?? 0)) / 2;
+      let angleDeg = Math.atan2((t?.y ?? 0) - (s?.y ?? 0), (t?.x ?? 0) - (s?.x ?? 0)) * (180 / Math.PI);
+      if (angleDeg > 90 || angleDeg < -90) angleDeg += 180;
+      d3.select(this)
+        .transition('focus').duration(DURATION).ease(ease)
+        .attr('transform', `translate(${mx},${my}) rotate(${angleDeg})`);
+    });
+  }
+
+  document.getElementById('right-placeholder').style.display = '';
+  document.getElementById('node-detail').classList.remove('visible');
+}
+
+/**
+ * updateRightPanel(node, edges)
+ * Populates the right-side detail panel with node info + connections.
+ */
+function updateRightPanel(node, edges) {
+  /* Show detail, hide placeholder */
+  document.getElementById('right-placeholder').style.display = 'none';
+  document.getElementById('node-detail').classList.add('visible');
+
+  /* Avatar — background matches node type appearance */
+  const avatarEl = document.getElementById('nd-avatar');
+  const nodeType = (node.type || '').toLowerCase();
+  const avatarBg = nodeType === 'person'
+    ? cssVar('--people')
+    : nodeType === 'government agency'
+    ? '#ffffff'
+    : locationColor(node.register_location || '');
+  avatarEl.style.background = avatarBg;
+  if (node.image_name) {
+    const rawAvatar = (node.image_name || '').trim().replace(/^images\//, '');
+    const avatarExt = rawAvatar.includes('.') ? rawAvatar : `${rawAvatar}.png`;
+    avatarEl.src = `images/${avatarExt}?v=${IMAGE_CACHE_BUST}`;
+    avatarEl.onerror = () => { avatarEl.style.display = 'none'; };
+    avatarEl.style.display = '';
+  } else {
+    avatarEl.style.display = 'none';
+  }
+
+  /* Names */
+  const nameTh = node.name_th || '';
+  const nameEn = node.id || '';
+  const nameThEl = document.getElementById('nd-name-th');
+  const nameEnEl = document.getElementById('nd-name-en');
+  nameThEl.textContent = nameTh || nameEn;
+  /* Only show English name if it differs from Thai name */
+  if (!nameTh || nameTh === nameEn) {
+    nameEnEl.textContent = '';
+    nameEnEl.style.display = 'none';
+  } else {
+    nameEnEl.textContent = nameEn;
+    nameEnEl.style.display = '';
+  }
+
+  /* Attributes */
+  const attrs = [
+    { label: 'Registered in',        value: node.register_location },
+    { label: 'Date of<br>incorporation', value: (() => {
+        const raw = node.date_of_incorporation;
+        if (!raw) return '';
+        const d = new Date(raw);
+        if (isNaN(d)) return raw; // return as-is if unparseable
+        return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      })() },
+    { label: 'Status',       value: node.status },
+    { label: 'Group',        value: node.group },
+  ].filter(a => a.value);
+
+  const attrsEl = document.getElementById('nd-attrs');
+  attrsEl.innerHTML = attrs.map(a =>
+    `<div class="attr-row">
+      <span class="attr-label">${a.label}</span>
+      <span class="attr-value">${a.value}</span>
+    </div>`
+  ).join('');
+
+  /* Note */
+  const noteWrap = document.getElementById('nd-note-wrap');
+  if (node.note) {
+    document.getElementById('nd-note').textContent = node.note;
+    noteWrap.style.display = '';
+  } else {
+    noteWrap.style.display = 'none';
+  }
+
+  /* Connections list */
+  const conns = edges.filter(e => e.source === node.id || e.target === node.id);
+  document.getElementById('nd-conn-count').textContent = conns.length;
+
+  /* Group order for relationship types */
+  const CONN_TYPE_ORDER = [
+    'shareholding',
+    'Past shareholding',
+    'Non-shareholding/control relationship',
+    'Past relationship',
+  ];
+  const CONN_TYPE_LABEL = {
+    'shareholding':                          'Shareholding',
+    'Past shareholding':                     'Past Shareholding',
+    'Non-shareholding/control relationship': 'Non-shareholding',
+    'Past relationship':                     'Past Non-shareholding',
+  };
+
+  function buildConnCard(e, node) {
+    const otherId   = e.source === node.id ? e.target : e.source;
+    const other     = nodeMap.get(otherId);
+    const dir       = e.source === node.id ? '→' : '←';
+    const edgeStyle = EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT;
+    const textColor = edgeStyle.stroke;
+    const rawName   = (other?.image_name || '').trim().replace(/^images\//, '');
+    const imgFile   = rawName ? (rawName.includes('.') ? rawName : rawName + '.png') : '';
+    /* Avatar background matches node appearance by type */
+    const otherType = (other?.type || '').toLowerCase();
+    const avatarBg  = otherType === 'person'
+      ? cssVar('--people')
+      : otherType === 'government agency'
+      ? '#ffffff'
+      : locationColor(other?.register_location || '');
+    const avatarHtml = imgFile
+      ? `<img class="conn-item-avatar" src="images/${imgFile}?v=${IMAGE_CACHE_BUST}"
+             style="background:${avatarBg}"
+             onerror="this.style.display='none';this.nextSibling.style.display='flex'"
+             alt="" />
+         <div class="conn-item-avatar-placeholder" style="display:none;background:${avatarBg}">
+           ${(other?.name_th || otherId).charAt(0)}
+         </div>`
+      : `<div class="conn-item-avatar-placeholder" style="background:${avatarBg}">
+           ${(other?.name_th || otherId).charAt(0)}
+         </div>`;
+    return `<div class="conn-item" data-id="${otherId}">
+      <div class="conn-item-header">
+        <div class="conn-item-text-group">
+          <div class="conn-item-name">${dir} ${other?.name_th || otherId}</div>
+          ${e.detail ? `<div class="conn-item-detail" style="color:${textColor}">${e.detail}</div>` : ''}
+          ${e.amount ? `<div class="conn-item-amount" style="color:${textColor}">${e.amount.toLocaleString()} shares</div>` : ''}
+        </div>
+        ${avatarHtml}
+      </div>
+    </div>`;
+  }
+
+  /* Group connections by type */
+  const grouped = {};
+  conns.forEach(e => {
+    const key = e.type || 'Non-shareholding/control relationship';
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(e);
+  });
+
+  const connList = document.getElementById('nd-conn-list');
+  connList.innerHTML = CONN_TYPE_ORDER
+    .filter(type => grouped[type]?.length)
+    .map(type => {
+      const items     = grouped[type];
+      const style     = EDGE_STYLES[type] || EDGE_STYLE_DEFAULT;
+      const pillBg    = style.strokeMuted || style.stroke;
+      const pillText  = style.stroke;
+      const label     = CONN_TYPE_LABEL[type] || type;
+      const cards     = items.map(e => buildConnCard(e, node)).join('');
+      return `<div class="conn-type-group">
+        <div class="conn-type-header">
+          <span class="conn-type-pill" style="background:${pillBg};color:${pillText}">${label}</span>
+          <span class="conn-type-count">${items.length}</span>
+        </div>
+        ${cards}
+      </div>`;
+    }).join('');
+
+  /* Clicking a connection item focuses that node */
+  connList.querySelectorAll('.conn-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const id  = el.dataset.id;
+      const n   = nodeMap.get(id);
+      if (n) onNodeClick(n, [...nodeMap.values()], edgeData);
+    });
+  });
+}
+
+/* ── Edge hover tooltip ─────────────────────────────────────── */
+function showEdgeHover(event, nodeDatum) {
+  // we show tooltip only on edge hover (via canvas mousemove),
+  // but this hook can display a quick identifier for the node.
+}
+
+function hideEdgeTooltip() {
+  document.getElementById('edge-tooltip').style.display = 'none';
+}
+
+/* Show edge label tooltip near mouse on edge hover */
+function setupEdgeHoverTooltip(svgEl, edges) {
+  const tooltip = document.getElementById('edge-tooltip');
+
+  d3.select(svgEl).selectAll('.edge-path')
+    .on('mousemove', function(event, e) {
+      const lines = [e.type, e.detail, e.amount ? `Amount: ${e.amount.toLocaleString()}` : '']
+        .filter(Boolean).join('<br>');
+      tooltip.innerHTML = lines;
+      tooltip.style.display = 'block';
+      tooltip.style.left = (event.offsetX + 14) + 'px';
+      tooltip.style.top  = (event.offsetY - 10) + 'px';
+    })
+    .on('mouseleave', () => { tooltip.style.display = 'none'; });
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   7. SEARCH BAR
+══════════════════════════════════════════════════════════════ */
+
+let searchActiveTab = 'people'; // 'people' | 'companies'
+
+function initSearch(nodes) {
+  const input    = document.getElementById('search-input');
+  const dropdown = document.getElementById('search-dropdown');
+  const results  = document.getElementById('search-results');
+  const tabs     = document.querySelectorAll('.search-tab');
+  const clearBtn = document.getElementById('search-clear');
+
+  /* Show/hide clear button based on input content */
+  input.addEventListener('input', () => {
+    clearBtn.style.display = input.value ? 'block' : 'none';
+  });
+  clearBtn.addEventListener('click', () => {
+    input.value = '';
+    clearBtn.style.display = 'none';
+    dropdown.classList.remove('visible');
+    input.focus();
+  });
+
+  /* Tab switching */
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      searchActiveTab = tab.dataset.tab;
+      renderSearchResults(input.value, nodes);
+    });
+  });
+
+  /* Input handler */
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    if (q.length === 0) {
+      dropdown.classList.remove('visible');
+      return;
+    }
+    dropdown.classList.add('visible');
+    renderSearchResults(q, nodes);
+  });
+
+  /* Close on outside click */
+  document.addEventListener('click', e => {
+    if (!document.getElementById('search-container').contains(e.target)) {
+      dropdown.classList.remove('visible');
+    }
+  });
+}
+
+function renderSearchResults(query, nodes) {
+  const results  = document.getElementById('search-results');
+  const q        = query.toLowerCase();
+
+  /* Filter by tab and query */
+  const typeFilter = searchActiveTab === 'people' ? 'person' : 'company';
+  const matched = nodes
+    .filter(n => n.type === typeFilter || (searchActiveTab === 'companies' && n.type === 'government agency'))
+    .filter(n => n.id.toLowerCase().includes(q) || n.name_th.toLowerCase().includes(q))
+    .sort((a, b) => (a.name_th || a.id).localeCompare(b.name_th || b.id));
+
+  if (matched.length === 0) {
+    results.innerHTML = '<div class="search-empty">No results found</div>';
+    return;
+  }
+
+  results.innerHTML = matched.map(n =>
+    `<div class="search-result" data-id="${n.id}">${n.name_th || n.id}</div>`
+  ).join('');
+
+  /* On result click — focus the node */
+  results.querySelectorAll('.search-result').forEach(el => {
+    el.addEventListener('click', () => {
+      const n = nodeMap.get(el.dataset.id);
+      if (n) {
+        onNodeClick(n, [...nodeMap.values()], edgeData);
+        document.getElementById('search-input').value = n.name_th || n.id;
+        document.getElementById('search-dropdown').classList.remove('visible');
+      }
+    });
+  });
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   8. LOCATION LEGEND (populated from data)
+══════════════════════════════════════════════════════════════ */
+
+function buildRelationshipLegend() {
+  const types = [
+    { key: 'Non-shareholding/control relationship', label: 'Control / Non-shareholding', dash: false },
+    { key: 'Past relationship',                     label: 'Past relationship',           dash: true  },
+    { key: 'shareholding',                          label: 'Shareholding',                dash: false },
+    { key: 'Past shareholding',                     label: 'Past shareholding',           dash: true  },
+  ];
+
+  const container = document.getElementById('relationship-legend');
+  if (!container) return;
+  container.innerHTML = types.map(({ key, label, dash }) => {
+    const style = EDGE_STYLES[key] || EDGE_STYLE_DEFAULT;
+    const color = style.stroke;
+    const bg = dash
+      ? `repeating-linear-gradient(90deg,${color} 0,${color} 4px,transparent 4px,transparent 8px)`
+      : color;
+    return `<div class="legend-item">
+      <div class="leg-edge" style="background:${bg}"></div>
+      ${label}
+    </div>`;
+  }).join('');
+}
+
+/* Fixed display order for location legend — matches sheet order */
+const LOCATION_LEGEND_ORDER = [
+  'Thailand',
+  'Singapore',
+  'Cambodia / Citizen of Cambodia',
+  'Luxembourg',
+  'Hong Kong',
+  'Turks & Caicos',
+  'Seychelles',
+  'China',
+  'Cayman Islands',
+  'British Virgin Islands',
+  'No information',
+];
+
+function buildLocationLegend(nodes) {
+  /* Use fixed order; only show locations present in the dataset */
+  const presentLocs = new Set(nodes.map(n => n.register_location).filter(Boolean));
+
+  const container = document.getElementById('location-legend');
+  container.innerHTML = LOCATION_LEGEND_ORDER
+    .filter(loc => presentLocs.has(loc) || loc === 'No information')
+    .map(loc =>
+      `<div class="legend-item">
+        <div class="leg-swatch" style="background:${locationColor(loc)}"></div>
+        ${loc}
+      </div>`
+    ).join('');
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   9. METADATA DISPLAY
+══════════════════════════════════════════════════════════════ */
+
+function applyMetadata(meta) {
+  document.getElementById('meta-title').textContent = meta.title;
+  document.getElementById('meta-date').textContent  = meta.updated ? `Updated: ${meta.updated}` : '';
+  document.title = meta.title;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   10. RESIZE HANDLER
+    Re-renders graph when window is resized so layout stays centred.
+══════════════════════════════════════════════════════════════ */
+
+function setupResizeHandler(nodes, edges) {
+  let debounceTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(async () => {
+      const svgEl = document.getElementById('graph-svg');
+      await initGraph(nodes, edges, svgEl);
+    }, 250);
+  });
+}
+
+
+
+/* ══════════════════════════════════════════════════════════════
+   12. GRID RENDERING — draws <path> edges (orthogonal) and
+       updates node positions for the grid layout.
+       Called by switchLayout() whenever currentLayout === 'grid'.
+══════════════════════════════════════════════════════════════ */
+
+/**
+ * drawEdgesRadial(edges)
+ * Draws standard straight <line> edges (existing radial style).
+ * Uses nodeMap.x / nodeMap.y for positions.
+ */
+function drawEdgesRadial(edges, g_edge_bg, g_edges_grp) {
+  /* Background stripes for shareholding */
+  g_edge_bg.selectAll('line.edge-bg')
+    .data(edges.filter(e => (EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT).bg))
+    .join('line')
+    .attr('class', 'edge-bg')
+    .attr('x1', e => nodeMap.get(e.source)?.x ?? 0)
+    .attr('y1', e => nodeMap.get(e.source)?.y ?? 0)
+    .attr('x2', e => nodeMap.get(e.target)?.x ?? 0)
+    .attr('y2', e => nodeMap.get(e.target)?.y ?? 0)
+    .attr('stroke', e => (EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT).strokeMuted)
+    .attr('stroke-opacity', 0.5)
+    .attr('stroke-width', e => clamp((e.amount / 5e6) * 20, 2, 40))
+    .attr('pointer-events', 'none');
+
+  /* Main edge lines */
+  g_edges_grp.selectAll('line.edge-path')
+    .data(edges)
+    .join('line')
+    .attr('class', 'edge-path')
+    .attr('data-source', e => e.source)
+    .attr('data-target', e => e.target)
+    .each(function(e) {
+      const s = nodeMap.get(e.source), t = nodeMap.get(e.target);
+      const ep = edgeEndpoints(s?.x ?? 0, s?.y ?? 0, t?.x ?? 0, t?.y ?? 0, t?.radius);
+      d3.select(this)
+        .attr('x1', ep.x1).attr('y1', ep.y1)
+        .attr('x2', ep.x2).attr('y2', ep.y2);
+    })
+    .attr('stroke', e => (EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT).strokeMuted)
+    .attr('stroke-width', 1.5)
+    .attr('stroke-dasharray', e => (EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT).dash)
+    .attr('marker-end', e => arrowMarkerId(e.type, true))
+    .on('click', e => e.stopPropagation())
+    .on('mouseenter', function() { d3.select(this).classed('edge-hovered', true); })
+    .on('mouseleave', function() { d3.select(this).classed('edge-hovered', false); });
+}
+
+/**
+ * drawEdgesGrid(edges)
+ * Draws orthogonal <path> edges (circuit-diagram style).
+ * Uses nodeMap.gxPx / nodeMap.gyPx for positions.
+ * Parallel edges between the same pair of nodes get a small
+ * horizontal jitter so they don't fully overlap.
+ */
+/* ══════════════════════════════════════════════════════════════
+   CIRCUIT-STYLE EDGE ROUTING  (trunk → branch)
+   ─────────────────────────────────────────────────────────────
+   Per source node:
+   1. Group outgoing edges by dominant direction (R/L/D/U).
+   2. Draw a shared trunk outward from source node edge.
+   3. Fan branches with perpendicular offsets at trunk tip.
+   4. Route each branch orthogonally to target (H→V→H or V→H→V).
+   5. Shorten last segment by node radius so arrow lands cleanly.
+
+   Uniform node size: all grid nodes use CONFIG.GRID_NODE_RADIUS.
+══════════════════════════════════════════════════════════════ */
+
+function drawEdgesGrid(edges, g_edge_bg, g_edges_grp) {
+  /* NR used for trunk/clearance — use average person radius as base */
+  const NR          = 17.5; // approx person/gov radius for trunk spacing
+  const TRUNK_LEN   = NR + 16;                  // trunk extends past node edge
+  const EDGE_OFFSET = 24;                        // px between parallel branches
+
+  /* ── Direction grouping ─────────────────────────────────────── */
+  function directionKey(sx, sy, tx, ty) {
+    const dx = tx - sx, dy = ty - sy;
+    if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 'R' : 'L';
+    return dy >= 0 ? 'D' : 'U';
+  }
+
+  /* Compute an offset index for each edge based on TWO groupings:
+     1. Same SOURCE + same direction → fan out from the shared trunk
+     2. Same TARGET + same incoming direction → fan out before arriving
+
+     We assign each edge a final offset that accounts for BOTH groupings.
+     Strategy: first pass builds source-groups and assigns an offset per
+     edge. Second pass builds target-groups and, for edges in a target
+     group of size > 1, adds an additional perpendicular offset so that
+     edges arriving at the same node from the same direction are spread. */
+
+  /* Map: edge → { srcOffset, tgtOffset, dir } */
+  const edgeMeta = new Map();
+
+  /* Pass 1: source grouping → compute per-source offsets */
+  const sourceGroups = new Map();
+  edges.forEach(e => {
+    const s = nodeMap.get(e.source), t = nodeMap.get(e.target);
+    if (!s || !t || s.gxPx === undefined || t.gxPx === undefined) return;
+    const dir = directionKey(s.gxPx, s.gyPx, t.gxPx, t.gyPx);
+    if (!sourceGroups.has(e.source)) sourceGroups.set(e.source, new Map());
+    const dm = sourceGroups.get(e.source);
+    if (!dm.has(dir)) dm.set(dir, []);
+    dm.get(dir).push({ edge: e, s, t, dir });
+    edgeMeta.set(e, { dir, srcIdx: 0, srcTotal: 1, tgtIdx: 0, tgtTotal: 1 });
+  });
+
+  /* Assign source group indices */
+  sourceGroups.forEach(dirMap => {
+    dirMap.forEach(items => {
+      items.forEach(({ edge }, idx) => {
+        const m = edgeMeta.get(edge);
+        if (m) { m.srcIdx = idx; m.srcTotal = items.length; }
+      });
+    });
+  });
+
+  /* Pass 2: target grouping → incoming direction = opposite of travel dir */
+  const targetGroups = new Map();
+  edgeMeta.forEach((meta, e) => {
+    const key = e.target + '||' + meta.dir; // group by target + direction
+    if (!targetGroups.has(key)) targetGroups.set(key, []);
+    targetGroups.get(key).push(e);
+  });
+
+  /* Assign target group indices */
+  targetGroups.forEach(group => {
+    group.forEach((e, idx) => {
+      const m = edgeMeta.get(e);
+      if (m) { m.tgtIdx = idx; m.tgtTotal = group.length; }
+    });
+  });
+
+  /* ── Append helpers ─────────────────────────────────────────── */
+  function appendEdgePath(grp, edgeDatum, pathD) {
+    const style = EDGE_STYLES[edgeDatum.type] || EDGE_STYLE_DEFAULT;
+    grp.append('path')
+      .datum(edgeDatum)
+      .attr('class', 'edge-path')
+      .attr('data-source', edgeDatum.source)
+      .attr('data-target', edgeDatum.target)
+      .attr('fill', 'none')
+      .attr('stroke', style.strokeMuted || style.stroke)
+      .attr('stroke-width', 1.5)
+      .attr('stroke-dasharray', style.dash || null)
+      .attr('marker-end', arrowMarkerId(edgeDatum.type, true))  // muted by default
+      .attr('d', pathD)
+      .on('click', e => e.stopPropagation())
+      .on('mouseenter', function() { d3.select(this).classed('edge-hovered', true); })
+      .on('mouseleave', function() { d3.select(this).classed('edge-hovered', false); });
+  }
+
+  function appendBgStripe(grp, edgeDatum, pathD) {
+    const style = EDGE_STYLES[edgeDatum.type] || EDGE_STYLE_DEFAULT;
+    if (!style.bg) return;
+    grp.append('path')
+      .datum(edgeDatum)
+      .attr('class', 'edge-bg')
+      .attr('fill', 'none')
+      .attr('stroke', style.strokeMuted || style.bg)
+      .attr('stroke-opacity', 0.5)
+      .attr('stroke-width', clamp((edgeDatum.amount / 5e6) * 20, 2, 40))
+      .attr('pointer-events', 'none')
+      .attr('d', pathD);
+  }
+
+  /* ── Main render loop ───────────────────────────────────────── */
+  sourceGroups.forEach((dirMap, sourceId) => {
+    dirMap.forEach((items, dir) => {
+      const { s } = items[0];
+      const sx = s.gxPx, sy = s.gyPx;
+
+      /* Trunk tip: past source node edge in dominant direction */
+      let ttx = sx, tty = sy;
+      if      (dir === 'R') ttx = sx + TRUNK_LEN;
+      else if (dir === 'L') ttx = sx - TRUNK_LEN;
+      else if (dir === 'D') tty = sy + TRUNK_LEN;
+      else if (dir === 'U') tty = sy - TRUNK_LEN;
+
+      items.forEach(({ edge, s: src, t }, idx) => {
+        const tx = t.gxPx, ty = t.gyPx;
+        const meta = edgeMeta.get(edge) || { srcIdx: idx, srcTotal: items.length, tgtIdx: 0, tgtTotal: 1 };
+
+        /* Combine source AND target group offsets:
+           - srcOffset fans edges from the same source/direction
+           - tgtOffset fans edges arriving at the same target/direction
+           Both are centred (idx - (total-1)/2) × EDGE_OFFSET               */
+        const srcOffset = (meta.srcIdx - (meta.srcTotal - 1) / 2) * EDGE_OFFSET;
+        const tgtOffset = (meta.tgtIdx - (meta.tgtTotal - 1) / 2) * EDGE_OFFSET;
+        /* Use the larger of the two offsets so branches don't collapse */
+        const offset = Math.abs(srcOffset) >= Math.abs(tgtOffset) ? srcOffset : tgtOffset;
+        let bx = ttx, by = tty;
+        if (dir === 'R' || dir === 'L') by = tty + offset;
+        else                             bx = ttx + offset;
+
+        /* Arrow clearance from target node edge */
+        const clearance = NR + 3;
+        let pathD;
+
+        if (dir === 'R' || dir === 'L') {
+          if (Math.abs(ty - by) < 2) {
+            /* Same row: M src → branch → horizontal to target */
+            const signX = tx >= bx ? 1 : -1;
+            const endX  = tx - signX * clearance;
+            pathD = `M ${sx} ${sy} L ${bx} ${by} L ${endX} ${ty}`;
+          } else {
+            /* Vertical jog needed: H → V → H */
+            const midX  = (bx + tx) / 2;
+            const signX = tx >= midX ? 1 : -1;
+            const endX  = tx - signX * clearance;
+            pathD = `M ${sx} ${sy} L ${bx} ${by} L ${midX} ${by} L ${midX} ${ty} L ${endX} ${ty}`;
+          }
+        } else {
+          if (Math.abs(tx - bx) < 2) {
+            /* Same column: M src → branch → vertical to target */
+            const signY = ty >= by ? 1 : -1;
+            const endY  = ty - signY * clearance;
+            pathD = `M ${sx} ${sy} L ${bx} ${by} L ${tx} ${endY}`;
+          } else {
+            /* Horizontal jog needed: V → H → V */
+            const midY  = (by + ty) / 2;
+            const signY = ty >= midY ? 1 : -1;
+            const endY  = ty - signY * clearance;
+            pathD = `M ${sx} ${sy} L ${bx} ${by} L ${bx} ${midY} L ${tx} ${midY} L ${tx} ${endY}`;
+          }
+        }
+
+        appendEdgePath(g_edges_grp, edge, pathD);
+        appendBgStripe(g_edge_bg,   edge, pathD);
+      });
+    });
+  });
+}
+
+/**
+ * drawEdgeLabelsForLayout(edges, gEdgeLabels)
+ * Renders edge label groups at the midpoint of each edge.
+ * Works for both layouts — reads gxPx/gyPx in grid mode, x/y in radial.
+ */
+function drawEdgeLabelsForLayout(edges, gEdgeLabels) {
+  /* ── Edge label overlap avoidance ─────────────────────────────────
+     Strategy:
+     1. Compute the natural anchor position for every label.
+     2. Group labels whose anchors are within CLUSTER_DIST px of each
+        other — these would overlap.
+     3. Within each cluster, spread labels perpendicular to the edge
+        direction by SPREAD_STEP px per label, centred on the group.
+     4. Render each label at its adjusted position.
+
+     This handles the common case of multiple edges arriving at the
+     same target node from similar directions.                        */
+
+  const ARROWHEAD_SPACE = 15;  // px from tip to label anchor
+  const FONT_SIZE       = 10;
+  const LINE_H          = 13;
+  const CLUSTER_DIST    = 20;  // px — anchors closer than this are "clustered"
+  const SPREAD_STEP     = LINE_H + 2; // px between labels in a cluster
+  const isGrid          = currentLayout === 'grid';
+
+  gEdgeLabels.selectAll('g.edge-label-g').remove();
+
+  const labelEdges = edges.filter(e => e.detail || e.amount);
+  if (labelEdges.length === 0) return;
+
+  /* ── Step 1: compute natural anchor for each edge ─────────────── */
+  const labelMeta = labelEdges.map(e => {
+    const s = nodeMap.get(e.source), t = nodeMap.get(e.target);
+    if (!s || !t) return null;
+
+    const sx = isGrid ? (s.gxPx ?? 0) : (s.x ?? 0);
+    const sy = isGrid ? (s.gyPx ?? 0) : (s.y ?? 0);
+    const tx = isGrid ? (t.gxPx ?? 0) : (t.x ?? 0);
+    const ty = isGrid ? (t.gyPx ?? 0) : (t.y ?? 0);
+    if (sx === tx && sy === ty) return null;
+
+    let anchorX, anchorY, angleDeg, textAnchor, perpX = 0, perpY = 0;
+
+    if (!isGrid) {
+      /* RADIAL: midpoint, shifted for leftward lines */
+      const dx = tx - sx, dy = ty - sy;
+      const len = Math.sqrt(dx*dx + dy*dy) || 1;
+      const ux = dx/len, uy = dy/len;
+      const rawA = Math.atan2(dy, dx) * (180 / Math.PI);
+      const isLeft = rawA > 90 || rawA < -90;
+      angleDeg  = isLeft ? rawA + 180 : rawA;
+      textAnchor = 'middle';
+      const midX = (sx + tx) / 2, midY = (sy + ty) / 2;
+      anchorX = isLeft ? midX + ux * ARROWHEAD_SPACE : midX;
+      anchorY = isLeft ? midY + uy * ARROWHEAD_SPACE : midY;
+      /* Perpendicular direction for spreading: rotate 90° from travel */
+      perpX = -uy; perpY = ux;
+
+    } else {
+      /* GRID: near arrowhead on final segment.
+         Use target node's actual gridRadius (type-based) for clearance. */
+      const dx = tx - sx, dy = ty - sy;
+      const tNodeG  = nodeMap.get(e.target);
+      const NR      = (tNodeG?.gridRadius || tNodeG?.radius || 14);
+      const clearance = NR + 3;
+      const isH = Math.abs(dx) >= Math.abs(dy);
+
+      if (isH) {
+        const signX = dx >= 0 ? 1 : -1;
+        const endX  = tx - signX * clearance;
+        anchorX = endX - signX * ARROWHEAD_SPACE;
+        anchorY = ty;
+        angleDeg   = 0;
+        textAnchor = signX >= 0 ? 'end' : 'start';
+        /* Perpendicular to horizontal = vertical */
+        perpX = 0; perpY = 1;
+      } else {
+        const signY = dy >= 0 ? 1 : -1;
+        const endY  = ty - signY * clearance;
+        anchorX = tx;
+        anchorY = endY - signY * ARROWHEAD_SPACE;
+        angleDeg   = 90;
+        textAnchor = signY >= 0 ? 'end' : 'start';
+        /* Perpendicular to vertical = horizontal (in rotated space) */
+        perpX = 1; perpY = 0;
+      }
+    }
+
+    const parts = [];
+    if (e.amount) parts.push({ txt: e.amount.toLocaleString() + ' shares', bold: true });
+    if (e.detail) wrapText(e.detail, 30).forEach(l => parts.push({ txt: l, bold: false }));
+
+    return { e, anchorX, anchorY, angleDeg, textAnchor, perpX, perpY,
+             parts, spreadOffset: 0 };
+  }).filter(Boolean);
+
+  /* ── Step 2: cluster nearby anchors and spread them apart ──────── */
+  const used = new Array(labelMeta.length).fill(false);
+
+  for (let i = 0; i < labelMeta.length; i++) {
+    if (used[i]) continue;
+    const cluster = [i];
+    for (let j = i + 1; j < labelMeta.length; j++) {
+      if (used[j]) continue;
+      const a = labelMeta[i], b = labelMeta[j];
+      const dist = Math.sqrt((a.anchorX - b.anchorX)**2 + (a.anchorY - b.anchorY)**2);
+      /* Only cluster labels that share the same angle (same direction) */
+      if (dist < CLUSTER_DIST && Math.abs(a.angleDeg - b.angleDeg) < 5) {
+        cluster.push(j);
+        used[j] = true;
+      }
+    }
+    used[i] = true;
+
+    if (cluster.length > 1) {
+      /* Spread cluster members perpendicular to travel direction */
+      const total = cluster.length;
+      cluster.forEach((idx, rank) => {
+        const m = labelMeta[idx];
+        const offset = (rank - (total - 1) / 2) * SPREAD_STEP;
+        m.spreadOffset = offset;
+      });
+    }
+  }
+
+  /* ── Step 3: render each label at its final position ───────────── */
+  labelMeta.forEach(({ e, anchorX, anchorY, angleDeg, textAnchor,
+                       perpX, perpY, parts, spreadOffset }) => {
+    /* Apply perpendicular spread offset */
+    const finalX = anchorX + perpX * spreadOffset;
+    const finalY = anchorY + perpY * spreadOffset;
+
+    const color = (EDGE_STYLES[e.type] || EDGE_STYLE_DEFAULT).stroke;
+    const grp   = gEdgeLabels.append('g')
+      .attr('class', 'edge-label-g')
+      .attr('data-source', e.source)
+      .attr('data-target', e.target)
+      .attr('pointer-events', 'none')
+      .attr('opacity', 0)
+      .attr('transform', `translate(${finalX},${finalY}) rotate(${angleDeg})`);
+
+    const totalH = parts.length * LINE_H;
+    parts.forEach(({ txt, bold }, li) => {
+      const dyVal = -totalH / 2 + li * LINE_H + LINE_H / 2;
+      grp.append('text')
+        .attr('text-anchor',       textAnchor)
+        .attr('dominant-baseline', 'middle')
+        .attr('dy',                dyVal)
+        .attr('font-size',         FONT_SIZE)
+        .attr('font-weight',       bold ? '700' : 'normal')
+        .attr('font-family',       "'IBM Plex Sans Thai Looped', sans-serif")
+        .attr('fill',              color)
+        .attr('stroke', cssVar('--bg'))
+        .attr('stroke-width',      3)
+        .attr('stroke-linejoin',   'round')
+        .attr('paint-order',       'stroke fill')
+        .text(txt);
+    });
+  });
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   13. LAYOUT SWITCHER
+   switchLayout(targetLayout, nodes, edges)
+   Animates all nodes and edges from current layout to target.
+   Redraws edges as <line> (radial) or <path> (grid).
+══════════════════════════════════════════════════════════════ */
+
+async function switchLayout(targetLayout, nodes, edges) {
+  if (targetLayout === currentLayout) return;
+
+  /* ── Step 1: Compute grid positions (only once — cached on node datums) ──
+     gxPx/gyPx are written directly onto each node object. Since nodes[]
+     is the same array reference throughout the session, positions persist
+     across layout switches. We only recompute on the very first switch.   */
+  if (targetLayout === 'grid' && !nodes.some(n => isFinite(n.gxPx))) {
+    setOverlay(true, 'Computing grid layout…');
+    const svgEl = document.getElementById('graph-svg');
+    await computeClusteredGridLayout(nodes, edges, svgEl.clientWidth, svgEl.clientHeight);
+    setOverlay(false);
+  }
+
+  currentLayout = targetLayout;
+  const DURATION = 700;
+  const ease     = d3.easeCubicInOut;
+
+  /* ── Step 2: Instant-clear any active selection ── */
+  clearFocusLayer();
+  selectedId = null;
+  d3.selectAll('.node-g')
+    .classed('faded highlighted node-selected node-connected', false)
+    .style('opacity', 1);
+  d3.selectAll('.edge-path').classed('edge-focused edge-faded', false);
+  d3.selectAll('.edge-label-g').attr('opacity', 0);
+  d3.selectAll('text.node-label').attr('opacity', 1).attr('fill', cssVar('--text-secondary'));
+  document.getElementById('right-placeholder').style.display = '';
+  document.getElementById('node-detail').classList.remove('visible');
+
+  /* ── Step 3: Reset zoom so grid coordinates land at screen centre ── */
+  const svgEl2 = document.getElementById('graph-svg');
+  const w = svgEl2.clientWidth, h = svgEl2.clientHeight;
+  d3.select('#graph-svg')
+    .call(ZOOM.transform, d3.zoomIdentity.translate(w / 2, h / 2));
+
+  /* ── Step 4: Animate nodes to new positions + uniform size in grid ── */
+  d3.selectAll('.node-g').each(function(d) {
+    const node = nodeMap.get(d.id);
+    if (!node) return;
+    const tx = targetLayout === 'grid' ? node.gxPx : node.x;
+    const ty = targetLayout === 'grid' ? node.gyPx : node.y;
+    const nr = targetLayout === 'grid' ? (node.gridRadius || node.radius) : node.radius;
+
+    d3.select(this)
+      .transition('layout').duration(DURATION).ease(ease)
+      .attr('transform', `translate(${tx},${ty})`);
+
+    /* Animate circle radius between radial (variable) and grid (uniform) */
+    d3.select(this).select('circle.node-circle')
+      .transition('layout').duration(DURATION).ease(ease)
+      .attr('r', nr);
+
+    /* Also resize the clip-path circle and image for image nodes */
+    const uid = `clip-${d.id.replace(/[^a-z0-9]/gi, '_')}`;
+    d3.select(`#${uid} circle`)
+      .transition('layout').duration(DURATION).ease(ease)
+      .attr('r', nr - 1);
+    d3.select(this).select('image')
+      .transition('layout').duration(DURATION).ease(ease)
+      .attr('x', -(nr - 1)).attr('y', -(nr - 1))
+      .attr('width',  (nr - 1) * 2)
+      .attr('height', (nr - 1) * 2);
+  });
+
+  /* ── Step 5: Animate labels to new positions ── */
+  const LABEL_GAP = 8, LABEL_LINE = 13;
+  d3.selectAll('text.node-label').each(function() {
+    const id   = d3.select(this).attr('data-label-for');
+    const node = nodeMap.get(id);
+    if (!node) return;
+    const tspans = d3.select(this).selectAll('tspan');
+    const count  = tspans.size();
+
+    if (targetLayout === 'grid') {
+      /* Grid: NO rotation, label below node, centre-aligned.
+         Reset transform to remove any radial rotation first.          */
+      const GRID_GAP  = 16;
+      const GRID_FONT = 10;
+      const nx = node.gxPx;
+      const ny = node.gyPx + (node.gridRadius || node.radius) + GRID_GAP;
+      const rawText  = d3.select(this).attr('data-raw-text') ||
+                       tspans.nodes().map(t => t.textContent).join(' ');
+      d3.select(this).attr('data-raw-text', rawText);
+      const newLines = wrapTextPx(rawText, 87, GRID_FONT);
+      /* Remove rotation by setting transform to identity */
+      d3.select(this)
+        .attr('transform', null)  // no rotation in grid view
+        .attr('text-anchor', 'middle');
+      d3.select(this).selectAll('tspan').remove();
+      newLines.forEach((line, li) => {
+        d3.select(this).append('tspan')
+          .attr('x', nx)
+          .attr('y', ny + li * LABEL_LINE)
+          .text(line);
+      });
+    } else {
+      /* Radial restore: truncated label with original rotation transform */
+      const ox        = +d3.select(this).attr('data-ox') || 0;
+      const oy        = +d3.select(this).attr('data-oy') || 0;
+      const rotateDeg = +d3.select(this).attr('data-rotate') || 0;
+      const rawT      = d3.select(this).attr('data-raw-text') || '';
+      const label     = truncateLabel(rawT);
+      const storedAnchor2 = d3.select(this).attr('data-text-anchor') || 'start';
+      d3.select(this)
+        .attr('text-anchor', storedAnchor2)
+        .attr('transform', `translate(${ox},${oy}) rotate(${rotateDeg})`);
+      d3.select(this).selectAll('tspan').remove();
+      d3.select(this).append('tspan')
+        .attr('x', 0).attr('y', 0).text(label);
+    }
+  });
+
+  /* ── Step 6: Redraw edges for new layout ── */
+  const gEdgeBg = d3.select('#g-edge-bg');
+  const gEdges  = d3.select('#g-edges');
+  const gLabels = d3.select('#g-edge-labels');
+
+  gEdgeBg.selectAll('*').remove();
+  gEdges.selectAll('*').remove();
+
+  /* Draw edges immediately using final positions (gxPx/gyPx already computed) */
+  if (targetLayout === 'grid') {
+    drawEdgesGrid(edges, gEdgeBg, gEdges);
+  } else {
+    drawEdgesRadial(edges, gEdgeBg, gEdges);
+  }
+  drawEdgeLabelsForLayout(edges, gLabels);
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   14. INIT GRAPH — orchestrates first render + toggle wiring
+══════════════════════════════════════════════════════════════ */
+
+async function initGraph(nodes, edges, svgEl) {
+  /* Start in radial mode to build the graph, then switch to grid */
+  currentLayout = 'radial';
+  renderGraph(nodes, edges, svgEl);
+  setupEdgeHoverTooltip(svgEl, edges);
+
+  /* Switch to grid view as the default starting layout */
+  await switchLayout('grid', nodes, edges);
+
+  /* Wire up zoom buttons */
+  document.getElementById('zoom-in').addEventListener('click', () => {
+    const svgEl = document.getElementById('graph-svg');
+    const t = d3.zoomTransform(svgEl);
+    d3.select(svgEl).call(ZOOM.scaleBy, 1.3);
+  });
+  document.getElementById('zoom-out').addEventListener('click', () => {
+    const svgEl = document.getElementById('graph-svg');
+    d3.select(svgEl).call(ZOOM.scaleBy, 1 / 1.3);
+  });
+
+  /* Wire up the view toggle buttons */
+  document.querySelectorAll('.view-btn').forEach(btn => {
+    /* Remove old listeners by cloning */
+    const fresh = btn.cloneNode(true);
+    btn.parentNode.replaceChild(fresh, btn);
+    fresh.addEventListener('click', async () => {
+      document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
+      fresh.classList.add('active');
+      await switchLayout(fresh.dataset.view, nodes, edges);
+      /* Re-apply highlight filter after layout switch if one is active */
+      if (activeHighlight) applyHighlightFilter(activeHighlight, nodes);
+    });
+  });
+
+  /* Wire up search */
+  initSearch(nodes);
+  setupResizeHandler(nodes, edges);
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   HIGHLIGHT FILTER
+   When a filter is active, nodes matching the condition are full
+   opacity; all others dim to 0.3. Clicking the active pill again
+   clears the filter. Node clicks are still functional.
+══════════════════════════════════════════════════════════════ */
+
+let activeHighlight = null; // current filter key or null
+
+/* Predicate functions — return true if a node matches the filter */
+const HIGHLIGHT_FILTERS = {
+  mauerberger_linked: n => ['true','1','yes'].includes((n.mauerberger_linked || '').toLowerCase().trim()),
+  cai_linked:         n => ['true','1','yes'].includes((n.cai_linked || '').toLowerCase().trim()),
+  amlo_frozen:        n => (n.note || '').toLowerCase().includes('amlo') ||
+                           (n.status || '').toLowerCase().includes('amlo'),
+  sec_suspended_jan:  n => (n.note || '').toLowerCase().includes('sec') ||
+                           (n.status || '').toLowerCase().includes('sec') ||
+                           (n.note || '').includes('Jan 2026') ||
+                           (n.status || '').includes('Jan 2026'),
+  nacc_investigation: n => (n.note || '').toLowerCase().includes('nacc') ||
+                           (n.status || '').toLowerCase().includes('nacc'),
+  erx_group:          n => (n.group || '').trim() === 'ERX Group (now KuCoin Thailand)',
+  tidc_group:         n => (n.group || '').trim() === 'TIDC Group (Thailand partner of WorldCoin)',
+};
+
+/**
+ * applyHighlightFilter(filterKey, nodes)
+ * Dims all non-matching node-g elements to 0.3 opacity.
+ * Pass null to clear.
+ */
+function applyHighlightFilter(filterKey, nodes) {
+  activeHighlight = filterKey;
+
+  if (!filterKey) {
+    /* Clear: restore all nodes and edges to default opacity */
+    d3.selectAll('.node-g').each(function() {
+      this.style.removeProperty('opacity');
+      d3.select(this).classed('highlight-dimmed', false);
+    });
+  /* Restore edge group visibility */
+    const gEdgesBgR  = document.getElementById('g-edge-bg');
+    const gEdgesMainR = document.getElementById('g-edges');
+    if (gEdgesBgR)   gEdgesBgR.removeAttribute('opacity');
+    if (gEdgesMainR) gEdgesMainR.removeAttribute('opacity');
+    d3.selectAll('text.node-label').each(function() {
+      this.style.removeProperty('opacity');
+    });
+    return;
+  }
+
+  const predicate = HIGHLIGHT_FILTERS[filterKey];
+  if (!predicate) return;
+
+  /* Apply to nodes — use inline style with !important via setAttribute */
+  d3.selectAll('.node-g').each(function(d) {
+    const node    = nodeMap.get(d.id);
+    const matches = node ? predicate(node) : false;
+    this.style.setProperty('opacity', matches ? '1' : '0.1', 'important');
+    d3.select(this).classed('highlight-dimmed', !matches);
+  });
+
+  /* Dim labels */
+  d3.selectAll('text.node-label').each(function() {
+    const id   = d3.select(this).attr('data-label-for');
+    const node = nodeMap.get(id);
+    const matches = node ? predicate(node) : false;
+    this.style.setProperty('opacity', matches ? '1' : '0.06', 'important');
+  });
+
+  /* Dim edges using data-source / data-target attributes which are always
+     set on every edge element (more reliable than datum binding).        */
+  /* Use CSS classes with !important to override all inline styles and transitions */
+  /* Hide the entire edge groups — simplest and most reliable approach */
+  const gEdgesBg  = document.getElementById('g-edge-bg');
+  const gEdgesMain = document.getElementById('g-edges');
+  if (gEdgesBg)   gEdgesBg.setAttribute('opacity', '0');
+  if (gEdgesMain) gEdgesMain.setAttribute('opacity', '0');
+}
+
+/**
+ * initHighlightFilter(nodes)
+ * Wires up the highlight pill buttons.
+ */
+function initHighlightFilter(nodes) {
+  /* Use event delegation on document so nothing can block it */
+  document.addEventListener('click', function highlightPillHandler(ev) {
+    const btn = ev.target.closest('.highlight-pill');
+    if (!btn) return;
+    const key = btn.dataset.filter;
+    console.log('[highlight] pill clicked:', key);
+
+      /* Reset node-selection state WITHOUT running transitions that would
+         override the highlight opacity. Interrupt any running transitions
+         first so they can't overwrite what we're about to set.          */
+      if (selectedId) {
+        selectedId = null;
+        /* Interrupt all node transitions immediately */
+        d3.selectAll('.node-g')
+          .interrupt('focus')
+          .classed('faded highlighted node-selected node-connected', false);
+        d3.selectAll('.edge-path')
+          .interrupt('focus')
+          .classed('edge-focused edge-faded', false)
+          .style('stroke-width', '1.5px');
+        d3.selectAll('text.node-label').interrupt('focus');
+        d3.selectAll('.edge-label-g').attr('opacity', 0);
+        document.getElementById('right-placeholder').style.display = '';
+        document.getElementById('node-detail').classList.remove('visible');
+      }
+
+      if (activeHighlight === key) {
+        /* Clicking active pill again → clear filter */
+        document.querySelectorAll('.highlight-pill').forEach(b => b.classList.remove('active'));
+        applyHighlightFilter(null, nodes);
+      } else {
+        document.querySelectorAll('.highlight-pill').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        applyHighlightFilter(key, nodes);
+      }
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════
+   11. MAIN ENTRY POINT
+══════════════════════════════════════════════════════════════ */
+
+async function main() {
+  // Activate in-page debug panel with ?debug=1 in the URL
+  window.__debugMode = new URLSearchParams(window.location.search).get('debug') === '1';
+  if (window.__debugMode) {
+    document.getElementById('debug-panel').style.display = 'block';
+  }
+  setOverlay(true, 'Loading data…');
+
+  try {
+    /* Load and preprocess all data */
+    const { nodes, edges, meta } = await loadAllData();
+
+    /* Update meta UI */
+    applyMetadata(meta);
+
+    /* Build location legend from data */
+    /* Render the graph and wire up the layout toggle */
+    const svgEl = document.getElementById('graph-svg');
+    /* Load colour config from sheet BEFORE rendering so colours apply on first draw */
+    await fetchColorConfig();
+
+    /* Rebuild legends with sheet colours */
+    buildRelationshipLegend();
+    buildLocationLegend(nodes);
+
+    /* Reveal UI now that sheet colours are applied */
+    document.getElementById('panel-left').style.visibility  = 'visible';
+    document.getElementById('panel-right').style.visibility = 'visible';
+    document.getElementById('view-toggle').style.visibility = 'visible';
+    document.getElementById('zoom-controls').style.visibility = 'visible';
+
+    await initGraph(nodes, edges, svgEl);
+    reapplyEdgeColors();
+
+    /* Init highlight filter */
+    initHighlightFilter(nodes);
+
+    /* Hide overlay */
+    setOverlay(false);
+
+  } catch (err) {
+    console.error(err);
+    setOverlay(true,
+      `Could not load data.<br><br>${err.message}<br><br>
+      <small>Make sure the Google Sheet is publicly shared and the SHEET_ID in CONFIG is correct.</small>`,
+      true
+    );
+  }
+}
+
+/* Kick off on DOMContentLoaded */
+
+/* ── Custom scrollbar for panels (Safari-compatible) ────────────────
+   Safari ignores ::-webkit-scrollbar when using overlay scrollbars.
+   We hide the native scrollbar and draw our own thin thumb overlay.  */
+function initCustomScrollbar(panel) {
+  const track = document.createElement('div');
+  track.className = 'custom-scrollbar';
+  const thumb = document.createElement('div');
+  thumb.className = 'custom-scrollbar-thumb';
+  thumb.style.pointerEvents = 'all'; // thumb is draggable
+  track.appendChild(thumb);
+  panel.appendChild(track);
+
+  function getThumbHeight() {
+    return Math.max(30, (panel.clientHeight / panel.scrollHeight) * panel.clientHeight);
+  }
+
+  function updateThumb() {
+    const scrollable  = panel.scrollHeight - panel.clientHeight;
+    const scrollRatio = scrollable > 0 ? panel.scrollTop / scrollable : 0;
+    const thumbH      = getThumbHeight();
+    const maxTop      = panel.clientHeight - thumbH;
+    thumb.style.height = thumbH + 'px';
+    thumb.style.top    = (scrollRatio * maxTop) + 'px';
+  }
+
+  /* ── Drag to scroll ─────────────────────────────────────────── */
+  let dragStartY = 0, dragStartScrollTop = 0;
+
+  thumb.addEventListener('mousedown', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragStartY         = e.clientY;
+    dragStartScrollTop = panel.scrollTop;
+    panel.classList.add('panel-scrolling');
+
+    function onMouseMove(e) {
+      const delta      = e.clientY - dragStartY;
+      const thumbH     = getThumbHeight();
+      const maxTop     = panel.clientHeight - thumbH;
+      const scrollable = panel.scrollHeight - panel.clientHeight;
+      const ratio      = maxTop > 0 ? delta / maxTop : 0;
+      panel.scrollTop  = dragStartScrollTop + ratio * scrollable;
+    }
+
+    function onMouseUp() {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup',   onMouseUp);
+      let t = setTimeout(() => panel.classList.remove('panel-scrolling'), 800);
+    }
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup',   onMouseUp);
+  });
+
+  /* ── Click on track to jump ─────────────────────────────────── */
+  track.addEventListener('mousedown', e => {
+    if (e.target === thumb) return;
+    const rect       = track.getBoundingClientRect();
+    const clickY     = e.clientY - rect.top;
+    const thumbH     = getThumbHeight();
+    const ratio      = (clickY - thumbH / 2) / (panel.clientHeight - thumbH);
+    panel.scrollTop  = ratio * (panel.scrollHeight - panel.clientHeight);
+  });
+
+  let scrollTimer;
+  panel.addEventListener('scroll', () => {
+    updateThumb();
+    panel.classList.add('panel-scrolling');
+    clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(() => panel.classList.remove('panel-scrolling'), 800);
+  });
+
+  new ResizeObserver(updateThumb).observe(panel);
+  updateThumb();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initCustomScrollbar(document.getElementById('panel-left'));
+  initCustomScrollbar(document.getElementById('panel-right'));
+});
+
+
+/* ── Responsive panel toggle ────────────────────────────────────────── */
+function initPanelToggle() {
+  const panel  = document.getElementById('panel-left');
+  const btn    = document.getElementById('panel-toggle');
+  if (!panel || !btn) return;
+
+  function isPortrait() { return window.innerWidth <= 768; }
+
+  function setCollapsed(collapsed) {
+    panel.classList.toggle('collapsed', collapsed);
+    panel.classList.toggle('expanded', !collapsed);
+    btn.textContent = collapsed ? '+' : '×';
+    btn.title       = collapsed ? 'Expand panel' : 'Collapse panel';
+  }
+
+  btn.addEventListener('click', () => {
+    setCollapsed(panel.classList.contains('expanded'));
+  });
+
+  /* Close panel when clicking outside (portrait only) */
+  document.addEventListener('click', e => {
+    if (!isPortrait()) return;
+    if (panel.classList.contains('expanded') && !panel.contains(e.target)) {
+      setCollapsed(true);
+    }
+  });
+
+  /* On resize: reset classes if switching to desktop */
+  window.addEventListener('resize', () => {
+    if (!isPortrait()) {
+      panel.classList.remove('collapsed', 'expanded');
+    } else if (!panel.classList.contains('expanded')) {
+      panel.classList.add('collapsed');
+    }
+  });
+
+  /* Init state */
+  if (isPortrait()) setCollapsed(true);
+}
+
+document.addEventListener('DOMContentLoaded', () => { main(); initPanelToggle(); });
+</script>
+</body>
+</html>
